@@ -1,0 +1,11 @@
+# Output generati dallo script EDA
+Documenti/eda_outputs/
+Documenti/eda_outputs_test19Nov/
+Code/__pycache__/
+*.pyc
+*.pyo
+*.DS_Store
+
+# Report o notebook temporanei
+*.ipynb_checkpoints
+
