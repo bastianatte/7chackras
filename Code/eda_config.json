@@ -1,6 +1,6 @@
 {
   "csv_path": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ListaTicketVenduti_12Nov25.csv",
-  "output_dir": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\eda_outputs_test19Nov",
+  "output_dir": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\eda_outputs_test19Nov_3",
   "plots": {
     "enabled": true,
     "format": "png"
