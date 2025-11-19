@@ -1,6 +1,6 @@
 {
-  "csv_path": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ticket2026.csv",
-  "output_dir": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\eda_outputs",
+  "csv_path": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ListaTicketVenduti_12Nov25.csv",
+  "output_dir": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\eda_outputs_test19Nov",
   "plots": {
     "enabled": true,
     "format": "png"
@@ -23,7 +23,27 @@
     "attendee_email": "Attendee E-mail",
     "buyer_email": "Buyer E-Mail",
     "country": "Country of residence / Paese di residenza (Campi ticket holder)",
-    "city": "City of residence / Citt\\uFFFD di residenza (Campi ticket holder)"
+    "city": "City of residence / Citt\u00e0 di residenza (Campi ticket holder)",
+    "api_key": "API Key",
+    "buyer_first_name": "Buyer First Name",
+    "buyer_last_name": "Buyer Last Name",
+    "buyer_name": "Buyer Name",
+    "check_ins": "Check-ins",
+    "check_outs": "Check-outs",
+    "checked_in": "Checked-in",
+    "date_of_birth": "Date of birth / Data di nascita (Campi ticket holder)",
+    "document_id": "Document ID / Codice Fiscale (Campi ticket holder)",
+    "first_name": "First Name",
+    "last_name": "Last Name",
+    "name": "Name",
+    "order_notes": "Order Notes",
+    "order_total_shown_once": "Order Total (Shown Once)",
+    "payment_gateway": "Payment Gateway",
+    "phone_number": "Phone number / Numero di telefono (Campi ticket holder)",
+    "place_of_birth": "Place of birth (city) / Luogo di nascita (Campi ticket holder)",
+    "vehicle_plate": "Targa Veicolo / License Plate - CARAVAN (Camperi)",
+    "ticket_download_url": "Ticket Download Url",
+    "ticket_tax": "Ticket Tax"
   },
   "checkin_columns": [
     "Checked-in",
