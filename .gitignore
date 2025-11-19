@@ -1,0 +1,11 @@
+# Output esterni (tutto ciò che viene generato sotto Documenti)
+Documenti/
+
+# Repo-level cache comuni
+Code/__pycache__/
+*.pyc
+*.pyo
+*.DS_Store
+
+# Checkpoint notebook
+*.ipynb_checkpoints/

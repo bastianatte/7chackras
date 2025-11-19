@@ -1,10 +1,10 @@
-# Output generati dallo script EDA
-Documenti/*
-Code/__pycache__/
+# Cache e artefatti Python
+__pycache__/
 *.pyc
 *.pyo
+
+# File sistema
 *.DS_Store
 
-# Report o notebook temporanei
-*.ipynb_checkpoints
-
+# Checkpoint notebook
+*.ipynb_checkpoints/
