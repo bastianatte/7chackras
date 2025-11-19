@@ -1,6 +1,5 @@
 # Output generati dallo script EDA
-Documenti/eda_outputs/
-Documenti/eda_outputs_test19Nov/
+Documenti/*
 Code/__pycache__/
 *.pyc
 *.pyo
