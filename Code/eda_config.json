@@ -23,7 +23,7 @@
     "attendee_email": "Attendee E-mail",
     "buyer_email": "Buyer E-Mail",
     "country": "Country of residence / Paese di residenza (Campi ticket holder)",
-    "city": "City of residence / Citt\\u00e0 di residenza (Campi ticket holder)"
+    "city": "City of residence / Citt\\uFFFD di residenza (Campi ticket holder)"
   },
   "checkin_columns": [
     "Checked-in",
