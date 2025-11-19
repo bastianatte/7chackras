@@ -117,6 +117,50 @@ def missing_count(series: pd.Series) -> int:
     return int(mask.sum())
 
 
+def drop_nan_categories(series: pd.Series) -> pd.Series:
+    idx = pd.Series(series.index, dtype=object)
+    normalized = idx.astype(str).str.strip().str.lower()
+    mask = (~idx.isna()) & (normalized != "nan") & (normalized != "")
+    return series[mask.to_numpy()]
+
+
+def parse_birth_date(value: object) -> pd.Timestamp:
+    if pd.isna(value):
+        return pd.NaT
+    s = str(value).strip()
+    if not s:
+        return pd.NaT
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
+        try:
+            return pd.Timestamp(datetime.strptime(s, fmt))
+        except ValueError:
+            continue
+    return pd.NaT
+
+
+def write_missing_report(df: pd.DataFrame, destination: Path) -> None:
+    total = len(df)
+    stats = []
+    for col in df.columns:
+        missing = missing_count(df[col])
+        filled = total - missing
+        percent = (missing / total * 100) if total else 0
+        stats.append((col, filled, missing, percent))
+    stats.sort(key=lambda item: item[3], reverse=True)
+    lines = [
+        "Report valori mancanti per colonna",
+        f"Totale righe nel CSV: {total}",
+        "",
+        "Formato: <colonna> | compilati | mancanti | % mancanti",
+        "",
+    ]
+    for col, filled, missing, percent in stats:
+        lines.append(f"{col} | {filled} | {missing} | {percent:.1f}%")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text("\n".join(lines), encoding="utf-8")
+    print(f"\nReport dettagliato colonne salvato in: {destination}")
+
+
 def report_missing(df: pd.DataFrame, columns: Iterable[Optional[str]], label: str) -> None:
     targets = [c for c in columns if c]
     if not targets:
@@ -181,25 +225,37 @@ def main() -> None:
     for idx, name in enumerate(df_raw.columns, start=1):
         print(f"{idx:>3}. {name}")
 
+    missing_report_path = output_dir / "column_missing_report.txt"
+    write_missing_report(df_raw, missing_report_path)
+
     df = df_raw.copy()
     df.columns = normalize_columns(df.columns)
 
-    payment_date_col = col_value("payment_date", "Payment Date")
-    ticket_type_col = col_value("ticket_type", "Ticket Type")
-    ticket_total_col = col_value("ticket_total", "Ticket Total")
-    order_total_col = col_value("order_total", "Order Total")
-    discount_col = col_value("discount_code", "Discount Code")
-    ticket_discount_col = col_value("ticket_discount", "Ticket Discount")
-    country_col = col_value(
-        "country", "Country of residence / Paese di residenza (Campi ticket holder)"
+    def ensure_existing(name: Optional[str], *alternatives: Optional[str]) -> Optional[str]:
+        candidates = (name,) + alternatives
+        for candidate in candidates:
+            if candidate and candidate in df.columns:
+                return candidate
+        return name
+
+    payment_date_col = ensure_existing(col_value("payment_date", "Payment Date"))
+    ticket_type_col = ensure_existing(col_value("ticket_type", "Ticket Type"))
+    ticket_total_col = ensure_existing(col_value("ticket_total", "Ticket Total"))
+    order_total_col = ensure_existing(col_value("order_total", "Order Total"))
+    discount_col = ensure_existing(col_value("discount_code", "Discount Code"))
+    ticket_discount_col = ensure_existing(col_value("ticket_discount", "Ticket Discount"))
+    country_col = ensure_existing(
+        col_value("country", "Country of residence / Paese di residenza (Campi ticket holder)")
     )
-    city_col = col_value(
-        "city", "City of residence / Citt\u00e0 di residenza (Campi ticket holder)"
+    city_preferred = col_value("city", "City of residence / Citt\u00e0 di residenza (Campi ticket holder)")
+    city_col = ensure_existing(
+        city_preferred,
+        city_preferred.replace("\u00e0", "\ufffd") if city_preferred else None,
     )
-    attendee_email_col = col_value("attendee_email", "Attendee E-mail")
-    buyer_email_col = col_value("buyer_email", "Buyer E-Mail")
-    order_number_col = col_value("order_number", "Order Number")
-    order_status_col = col_value("order_status", "Order Status")
+    attendee_email_col = ensure_existing(col_value("attendee_email", "Attendee E-mail"))
+    buyer_email_col = ensure_existing(col_value("buyer_email", "Buyer E-Mail"))
+    order_number_col = ensure_existing(col_value("order_number", "Order Number"))
+    order_status_col = ensure_existing(col_value("order_status", "Order Status"))
 
     if payment_date_col and payment_date_col in df.columns:
         df[PARSED_DATE_COL] = df[payment_date_col].map(parse_payment_date)
