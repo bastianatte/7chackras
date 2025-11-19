@@ -138,11 +138,15 @@ def parse_birth_date(value: object) -> pd.Timestamp:
     return pd.NaT
 
 
-def write_missing_report(df: pd.DataFrame, destination: Path) -> None:
-    total = len(df)
+def write_missing_report(
+    df_full: pd.DataFrame,
+    destination: Path,
+    df_paid: Optional[pd.DataFrame] = None,
+) -> None:
+    total = len(df_full)
     stats = []
-    for col in df.columns:
-        missing = missing_count(df[col])
+    for col in df_full.columns:
+        missing = missing_count(df_full[col])
         filled = total - missing
         percent = (missing / total * 100) if total else 0
         stats.append((col, filled, missing, percent))
@@ -156,6 +160,30 @@ def write_missing_report(df: pd.DataFrame, destination: Path) -> None:
     ]
     for col, filled, missing, percent in stats:
         lines.append(f"{col} | {filled} | {missing} | {percent:.1f}%")
+
+    if df_paid is not None:
+        total_paid = len(df_paid)
+        stats_paid = []
+        for col in df_paid.columns:
+            missing = missing_count(df_paid[col])
+            filled = total_paid - missing
+            percent = (missing / total_paid * 100) if total_paid else 0
+            stats_paid.append((col, filled, missing, percent))
+        stats_paid.sort(key=lambda item: item[3], reverse=True)
+
+        lines.extend(
+            [
+                "",
+                "Report valori mancanti per colonna (solo ordini Paid)",
+                f"Totale righe considerate: {total_paid}",
+                "",
+                "Formato: <colonna> | compilati | mancanti | % mancanti",
+                "",
+            ]
+        )
+        for col, filled, missing, percent in stats_paid:
+            lines.append(f"{col} | {filled} | {missing} | {percent:.1f}%")
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text("\n".join(lines), encoding="utf-8")
     print(f"\nReport dettagliato colonne salvato in: {destination}")
@@ -225,9 +253,6 @@ def main() -> None:
     for idx, name in enumerate(df_raw.columns, start=1):
         print(f"{idx:>3}. {name}")
 
-    missing_report_path = output_dir / "column_missing_report.txt"
-    write_missing_report(df_raw, missing_report_path)
-
     df = df_raw.copy()
     df.columns = normalize_columns(df.columns)
 
@@ -256,6 +281,11 @@ def main() -> None:
     buyer_email_col = ensure_existing(col_value("buyer_email", "Buyer E-Mail"))
     order_number_col = ensure_existing(col_value("order_number", "Order Number"))
     order_status_col = ensure_existing(col_value("order_status", "Order Status"))
+    dob_preferred = col_value("date_of_birth", "Date of birth / Data di nascita (Campi ticket holder)")
+    dob_col = ensure_existing(
+        dob_preferred,
+        dob_preferred.replace("\u00e0", "\ufffd") if dob_preferred else None,
+    )
 
     if payment_date_col and payment_date_col in df.columns:
         df[PARSED_DATE_COL] = df[payment_date_col].map(parse_payment_date)
@@ -284,9 +314,28 @@ def main() -> None:
         if email_col in df.columns:
             df[email_col] = df[email_col].astype(str).str.strip().str.lower()
 
+    df_full = df.copy()
+    total_rows_full = len(df_full)
+    if order_status_col and order_status_col in df_full.columns:
+        normalized_status = df_full[order_status_col].astype(str).str.strip().str.lower()
+        paid_mask = normalized_status == "paid"
+        paid_count = int(paid_mask.sum())
+        print(f"\nFiltro order status 'paid': considero {paid_count} righe su {total_rows_full}.")
+        if paid_count > 0:
+            df = df_full.loc[paid_mask].copy()
+        else:
+            print("Nessuna riga con stato 'paid': analisi su tutte le righe.")
+            df = df_full
+    else:
+        print("\nColonna Order Status non disponibile: analisi su tutte le righe.")
+        df = df_full
+
     clean_path = output_dir / "tickets_clean.csv"
     df.to_csv(clean_path, index=False, encoding="utf-8")
     print(f"\nFile pulito salvato in: {clean_path}")
+
+    missing_report_path = output_dir / "column_missing_report.txt"
+    write_missing_report(df_raw, missing_report_path, df_paid=df)
 
     n_rows, n_cols = df.shape
     print(f"\nRighe (record biglietti): {n_rows:,}")
@@ -345,6 +394,22 @@ def main() -> None:
     if order_total_num in df.columns:
         print(f"Somma {order_total_num}: {tot_revenue_order:,.2f}")
 
+    # Order Status distribution (usa sempre il dataset completo)
+    if order_status_col and order_status_col in df_full.columns:
+        order_status_counts = df_full[order_status_col].fillna("NaN").value_counts()
+        print("\nDistribuzione Order Status (dataset completo):")
+        print(order_status_counts)
+
+        if plots_enabled:
+            status_plot = drop_nan_categories(order_status_counts)
+            fig, ax = plt.subplots(figsize=(6, 4))
+            status_plot.plot(kind="bar", ax=ax, color="#455a64")
+            ax.set_title("Distribuzione Order Status")
+            ax.set_ylabel("Ordini")
+            ax.set_xlabel("Status")
+            fig.tight_layout()
+            save_plot(fig, plots_dir, "order_status_distribution", plot_format)
+
     if ticket_type_col in df.columns:
         by_type = (
             df.groupby(ticket_type_col, dropna=False)
@@ -361,11 +426,13 @@ def main() -> None:
         print(by_type.head(20))
 
         if plots_enabled:
-            fig, ax = plt.subplots(figsize=(10, 5))
-            by_type["tickets"].plot(kind="bar", ax=ax, color="#1976d2")
+            type_counts = by_type["tickets"].sort_values(ascending=True)
+            height = max(4, 0.6 * len(type_counts))
+            fig, ax = plt.subplots(figsize=(10, height))
+            type_counts.plot(kind="barh", ax=ax, color="#1976d2")
             ax.set_title("Conteggio biglietti per tipo")
-            ax.set_ylabel("Biglietti")
-            ax.set_xlabel(ticket_type_col)
+            ax.set_xlabel("Biglietti")
+            ax.set_ylabel("")
             fig.tight_layout()
             save_plot(fig, plots_dir, "ticket_type_counts", plot_format)
 
@@ -407,7 +474,8 @@ def main() -> None:
         print(by_country.head(20))
         if plots_enabled:
             fig, ax = plt.subplots(figsize=(10, 4))
-            by_country.head(15).plot(kind="bar", ax=ax, color="#6a1b9a")
+            country_plot = drop_nan_categories(by_country).head(15)
+            country_plot.plot(kind="bar", ax=ax, color="#6a1b9a")
             ax.set_title("Top 15 paesi")
             ax.set_ylabel("Biglietti")
             fig.tight_layout()
@@ -419,11 +487,50 @@ def main() -> None:
         print(by_city.head(20))
         if plots_enabled:
             fig, ax = plt.subplots(figsize=(10, 4))
-            by_city.head(15).plot(kind="bar", ax=ax, color="#00838f")
+            city_plot = drop_nan_categories(by_city).head(15)
+            city_plot.plot(kind="bar", ax=ax, color="#00838f")
             ax.set_title("Top 15 citt\u00e0")
             ax.set_ylabel("Biglietti")
             fig.tight_layout()
             save_plot(fig, plots_dir, "top_citta", plot_format)
+
+
+    # === Demografia (date di nascita) =========================================
+    if dob_col in df.columns:
+        dob_parsed_col = "BirthDate_parsed"
+        df[dob_parsed_col] = df[dob_col].map(parse_birth_date)
+        dob_valid = df.dropna(subset=[dob_parsed_col]).copy()
+        if dob_valid.empty:
+            print("\nDate di nascita non disponibili o non parsabili.")
+        else:
+            today = pd.Timestamp.today().normalize()
+            ages = (today - dob_valid[dob_parsed_col]).dt.days / 365.25
+            dob_valid["Eta (anni)"] = ages
+            print("\nStatistiche Eta basate sulle date di nascita:")
+            print(dob_valid["Eta (anni)"].describe().round(1))
+
+            birth_year_counts = (
+                dob_valid[dob_parsed_col].dt.year.value_counts().sort_index()
+            )
+            print("\nPartecipanti per anno di nascita (prime righe):")
+            print(birth_year_counts.head(20))
+
+            if plots_enabled:
+                fig, ax = plt.subplots(figsize=(8, 4))
+                ages.plot(kind="hist", bins=min(10, len(dob_valid)), ax=ax, color="#5d4037")
+                ax.set_title("Distribuzione Eta partecipanti")
+                ax.set_xlabel("Eta (anni)")
+                ax.set_ylabel("Partecipanti")
+                fig.tight_layout()
+                save_plot(fig, plots_dir, "eta_partecipanti", plot_format)
+
+                fig, ax = plt.subplots(figsize=(8, 4))
+                birth_year_counts.tail(40).plot(kind="bar", ax=ax, color="#3949ab")
+                ax.set_title("Anno di nascita (ultimi 40 anni)")
+                ax.set_xlabel("Anno")
+                ax.set_ylabel("Partecipanti")
+                fig.tight_layout()
+                save_plot(fig, plots_dir, "nascite_per_anno", plot_format)
 
     # === Sconti ===============================================================
     report_missing(df, [discount_col, numeric_map.get(ticket_discount_col)], "Sconti")
