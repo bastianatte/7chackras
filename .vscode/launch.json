@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Ticket EDA",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Code/ticket_eda.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--config",
+        "${workspaceFolder}/Code/eda_config.json"
+      ]
+    }
+  ]
+}
