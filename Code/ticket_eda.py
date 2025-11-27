@@ -497,50 +497,40 @@ def main() -> None:
             print(daily.head())
             if plots_enabled:
                 fig, ax = plt.subplots(figsize=(10, 4))
-                daily.plot(ax=ax, marker="o", color="#388e3c")
+                daily.plot(ax=ax, marker="o", color="#388e3c", label="Vendite")
                 ax.set_title("Biglietti venduti per giorno")
                 ax.set_xlabel("Data")
                 ax.set_ylabel("Biglietti")
                 ax.grid(True, alpha=0.3)
+                legend_handles = []
                 if parsed_timeline_markers:
-                    max_y = max(float(daily.max()), 1.0)
-                    for idx, marker in enumerate(parsed_timeline_markers):
+                    for marker in parsed_timeline_markers:
                         mdate = marker["date"].date()
-                        ax.axvline(mdate, color=marker["color"], linestyle="--", alpha=0.7, linewidth=1)
-                        ax.text(
-                            mdate,
-                            max_y * (1.02 + idx * 0.05),
-                            marker["label"],
-                            rotation=90,
-                            va="bottom",
-                            ha="center",
-                            fontsize=8,
-                            color=marker["color"],
+                        line = ax.axvline(
+                            mdate, color=marker["color"], linestyle="--", alpha=0.8, linewidth=1.2, label=marker["label"]
                         )
+                        legend_handles.append(line)
+                if legend_handles:
+                    ax.legend()
                 fig.tight_layout()
                 save_plot(fig, plots_dir, "vendite_giornaliere", plot_format)
 
                 fig, ax = plt.subplots(figsize=(10, 4))
-                daily.cumsum().plot(ax=ax, marker="o", color="#d32f2f")
+                daily.cumsum().plot(ax=ax, marker="o", color="#d32f2f", label="Cumulato")
                 ax.set_title("Biglietti cumulati")
                 ax.set_xlabel("Data")
                 ax.set_ylabel("Cumulato")
                 ax.grid(True, alpha=0.3)
+                legend_handles = []
                 if parsed_timeline_markers:
-                    max_y = max(float(daily.cumsum().max()), 1.0)
-                    for idx, marker in enumerate(parsed_timeline_markers):
+                    for marker in parsed_timeline_markers:
                         mdate = marker["date"].date()
-                        ax.axvline(mdate, color=marker["color"], linestyle="--", alpha=0.7, linewidth=1)
-                        ax.text(
-                            mdate,
-                            max_y * (1.02 + idx * 0.05),
-                            marker["label"],
-                            rotation=90,
-                            va="bottom",
-                            ha="center",
-                            fontsize=8,
-                            color=marker["color"],
+                        line = ax.axvline(
+                            mdate, color=marker["color"], linestyle="--", alpha=0.8, linewidth=1.2, label=marker["label"]
                         )
+                        legend_handles.append(line)
+                if legend_handles:
+                    ax.legend()
                 fig.tight_layout()
                 save_plot(fig, plots_dir, "vendite_cumulative", plot_format)
         else:
