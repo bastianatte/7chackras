@@ -1,6 +1,6 @@
 {
   "csv_path": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ListaTicketVenduti_27Nov25.csv",
-  "output_dir": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ListaTicketVenduti_27Nov25_output",
+  "output_dir": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ListaTicketVenduti_27Nov25_output_2",
   "plots": {
     "enabled": true,
     "format": "png"
@@ -8,23 +8,28 @@
   "timeline_markers": [
     {
       "date": "2025-09-02",
-      "label": "phase 1 psy artist"
+      "label": "psy lineup release",
+      "color": "#d81b60"
     },
     {
       "date": "2025-11-23",
-      "label": "phase 2 tekno artist"
+      "label": "tekno lineup release",
+      "color": "#6a1b9a"
     },
     {
-      "date": "",
-      "label": "early bird start"
+      "date": "2025-07-27",
+      "label": "early bird",
+      "color": "#1e88e5"
     },
     {
-      "date": "",
-      "label": "phase 0 start"
+      "date": "2025-08-10",
+      "label": "phase 0",
+      "color": "#00897b"
     },
     {
-      "date": "",
-      "label": "phase 1 start"
+      "date": "2025-08-24",
+      "label": "phase 1",
+      "color": "#fbc02d"
     }
   ],
   "columns": {
@@ -45,7 +50,7 @@
     "attendee_email": "Attendee E-mail",
     "buyer_email": "Buyer E-Mail",
     "country": "Country of residence / Paese di residenza (Campi ticket holder)",
-    "city": "City of residence / Citt\u00e0 di residenza (Campi ticket holder)",
+    "city": "City of residence / Città di residenza (Campi ticket holder)",
     "api_key": "API Key",
     "buyer_first_name": "Buyer First Name",
     "buyer_last_name": "Buyer Last Name",
@@ -71,7 +76,7 @@
     "Stato di Residenza / Country of Residence (Campi ticket restaurant)"
   ],
   "extra_city_columns": [
-    "Citt\u00e0 di Residenza / City of Residence (Campi ticket restaurant)"
+    "Città di Residenza / City of Residence (Campi ticket restaurant)"
   ],
   "checkin_columns": [
     "Checked-in",
