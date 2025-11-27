@@ -132,6 +132,102 @@ def slugify(text: str) -> str:
     return safe.strip("_")[:80]
 
 
+def add_timeline_markers(ax: plt.Axes, markers: List[Dict[str, object]]) -> None:
+    """Add vertical lines with labels to a time-based axis."""
+    if not markers:
+        return
+    handles = []
+    for marker in markers:
+        mdate = marker["date"].date()
+        line = ax.axvline(
+            mdate,
+            color=marker["color"],
+            linestyle="--",
+            alpha=0.8,
+            linewidth=1.2,
+            label=marker["label"],
+        )
+        handles.append(line)
+    if handles:
+        ax.legend()
+
+
+def plot_sales_timelines(
+    daily_counts: pd.Series,
+    markers: List[Dict[str, object]],
+    plots_dir: Path,
+    fmt: str,
+) -> None:
+    """Plot vendite giornaliere e cumulative con marker delle fasi."""
+    fig, ax = plt.subplots(figsize=(10, 4))
+    daily_counts.plot(ax=ax, marker="o", color="#388e3c", label="Vendite")
+    ax.set_title("Biglietti venduti per giorno")
+    ax.set_xlabel("Data")
+    ax.set_ylabel("Biglietti")
+    ax.grid(True, alpha=0.3)
+    add_timeline_markers(ax, markers)
+    fig.tight_layout()
+    save_plot(fig, plots_dir, "vendite_giornaliere", fmt)
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    daily_counts.cumsum().plot(ax=ax, marker="o", color="#d32f2f", label="Cumulato")
+    ax.set_title("Biglietti cumulati")
+    ax.set_xlabel("Data")
+    ax.set_ylabel("Cumulato")
+    ax.grid(True, alpha=0.3)
+    add_timeline_markers(ax, markers)
+    fig.tight_layout()
+    save_plot(fig, plots_dir, "vendite_cumulative", fmt)
+
+
+def analyze_geography(
+    df: pd.DataFrame,
+    geo_country_cols: List[str],
+    geo_city_cols: List[str],
+    plots_enabled: bool,
+    plots_dir: Path,
+    plot_format: str,
+) -> None:
+    """Analisi e plot per geografia (paesi/citta)."""
+    analyze_geography(df, geo_country_cols, geo_city_cols, plots_enabled, plots_dir, plot_format)
+
+
+def export_summary_tables(
+    df: pd.DataFrame,
+    geo_country_cols: List[str],
+    ticket_type_col: Optional[str],
+    ticket_total_num: Optional[str],
+    output_dir: Path,
+) -> None:
+    """Esporta CSV di riepilogo."""
+    exports: Dict[str, pd.DataFrame] = {}
+    if ticket_type_col in df.columns:
+        exports["by_type.csv"] = (
+            df.groupby(ticket_type_col, dropna=False)
+            .agg(
+                tickets=(ticket_type_col, "size"),
+                revenue=(ticket_total_num, "sum") if ticket_total_num in df.columns else (ticket_type_col, "size"),
+                avg_price=(ticket_total_num, "mean")
+                if ticket_total_num in df.columns
+                else (ticket_type_col, "size"),
+            )
+            .sort_values(["revenue", "tickets"], ascending=False)
+        )
+    for idx, col in enumerate(geo_country_cols):
+        fname = "by_country.csv" if idx == 0 else f"by_country_{slugify(col)}.csv"
+        exports[fname] = (
+            df.groupby(col, dropna=False)
+            .size()
+            .to_frame("tickets")
+            .sort_values("tickets", ascending=False)
+        )
+
+    for name, table in exports.items():
+        out_path = output_dir / name
+        table.to_csv(out_path, encoding="utf-8")
+        print(f"Esportato: {out_path}")
+
+
 def parse_birth_date(value: object) -> pd.Timestamp:
     if pd.isna(value):
         return pd.NaT
@@ -496,43 +592,7 @@ def main() -> None:
             print("\nTimeline vendite (prime righe):")
             print(daily.head())
             if plots_enabled:
-                fig, ax = plt.subplots(figsize=(10, 4))
-                daily.plot(ax=ax, marker="o", color="#388e3c", label="Vendite")
-                ax.set_title("Biglietti venduti per giorno")
-                ax.set_xlabel("Data")
-                ax.set_ylabel("Biglietti")
-                ax.grid(True, alpha=0.3)
-                legend_handles = []
-                if parsed_timeline_markers:
-                    for marker in parsed_timeline_markers:
-                        mdate = marker["date"].date()
-                        line = ax.axvline(
-                            mdate, color=marker["color"], linestyle="--", alpha=0.8, linewidth=1.2, label=marker["label"]
-                        )
-                        legend_handles.append(line)
-                if legend_handles:
-                    ax.legend()
-                fig.tight_layout()
-                save_plot(fig, plots_dir, "vendite_giornaliere", plot_format)
-
-                fig, ax = plt.subplots(figsize=(10, 4))
-                daily.cumsum().plot(ax=ax, marker="o", color="#d32f2f", label="Cumulato")
-                ax.set_title("Biglietti cumulati")
-                ax.set_xlabel("Data")
-                ax.set_ylabel("Cumulato")
-                ax.grid(True, alpha=0.3)
-                legend_handles = []
-                if parsed_timeline_markers:
-                    for marker in parsed_timeline_markers:
-                        mdate = marker["date"].date()
-                        line = ax.axvline(
-                            mdate, color=marker["color"], linestyle="--", alpha=0.8, linewidth=1.2, label=marker["label"]
-                        )
-                        legend_handles.append(line)
-                if legend_handles:
-                    ax.legend()
-                fig.tight_layout()
-                save_plot(fig, plots_dir, "vendite_cumulative", plot_format)
+                plot_sales_timelines(daily, parsed_timeline_markers, plots_dir, plot_format)
         else:
             print("\nNessuna data valida per la timeline vendite.")
 
@@ -693,32 +753,7 @@ def main() -> None:
         print(missing_summary.round(1))
 
     # === Esportazioni ========================================================
-    exports: Dict[str, pd.DataFrame] = {}
-    if ticket_type_col in df.columns:
-        exports["by_type.csv"] = (
-            df.groupby(ticket_type_col, dropna=False)
-            .agg(
-                tickets=(ticket_type_col, "size"),
-                revenue=(ticket_total_num, "sum") if ticket_total_num in df.columns else (ticket_type_col, "size"),
-                avg_price=(ticket_total_num, "mean")
-                if ticket_total_num in df.columns
-                else (ticket_type_col, "size"),
-            )
-            .sort_values(["revenue", "tickets"], ascending=False)
-        )
-    for idx, col in enumerate(geo_country_cols):
-        fname = "by_country.csv" if idx == 0 else f"by_country_{slugify(col)}.csv"
-        exports[fname] = (
-            df.groupby(col, dropna=False)
-            .size()
-            .to_frame("tickets")
-            .sort_values("tickets", ascending=False)
-        )
-
-    for name, table in exports.items():
-        out_path = output_dir / name
-        table.to_csv(out_path, encoding="utf-8")
-        print(f"Esportato: {out_path}")
+    export_summary_tables(df, geo_country_cols, ticket_type_col, ticket_total_num, output_dir)
 
     print("\nAnalisi completata.")
 
