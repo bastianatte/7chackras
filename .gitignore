@@ -1,5 +1,6 @@
 # Output esterni (tutto ciò che viene generato sotto Documenti)
 Documenti/
+Tickets/
 
 # Repo-level cache comuni
 Code/__pycache__/
