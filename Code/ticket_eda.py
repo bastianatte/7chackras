@@ -124,6 +124,14 @@ def drop_nan_categories(series: pd.Series) -> pd.Series:
     return series[mask.to_numpy()]
 
 
+def slugify(text: str) -> str:
+    """Create a filesystem-friendly slug from a column name."""
+    safe = "".join(ch.lower() if ch.isalnum() else "_" for ch in text)
+    while "__" in safe:
+        safe = safe.replace("__", "_")
+    return safe.strip("_")[:80]
+
+
 def parse_birth_date(value: object) -> pd.Timestamp:
     if pd.isna(value):
         return pd.NaT
@@ -234,13 +242,26 @@ def main() -> None:
     plots_enabled = plots_cfg.get("enabled", True)
     plot_format = plots_cfg.get("format", "png")
     plots_dir = output_dir / "plots"
+    timeline_markers = config.get("timeline_markers", []) or []
 
     columns_cfg: Dict[str, str] = config.get("columns", {})
+    extra_country_cfg = config.get("extra_country_columns", []) or []
+    extra_city_cfg = config.get("extra_city_columns", []) or []
     checkin_columns = config.get("checkin_columns", DEFAULT_CHECKIN_COLUMNS)
 
     def col_value(key: str, fallback: Optional[str]) -> Optional[str]:
         value = columns_cfg.get(key)
         return value or fallback
+
+    def to_list(value: object) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        try:
+            return [v for v in value if v is not None]
+        except TypeError:
+            return []
 
     pd.set_option("display.max_columns", 120)
     pd.set_option("display.width", 160)
@@ -263,6 +284,33 @@ def main() -> None:
                 return candidate
         return name
 
+    def resolve_existing_list(names: Iterable[Optional[str]]) -> List[str]:
+        resolved: List[str] = []
+        for name in names:
+            if not name:
+                continue
+            alt = name.replace("\u00e0", "\ufffd") if "\u00e0" in name else None
+            found = ensure_existing(name, alt)
+            if found and found in df.columns and found not in resolved:
+                resolved.append(found)
+        return resolved
+
+    def parse_timeline_markers(raw_markers: Iterable[object]) -> List[Dict[str, object]]:
+        parsed: List[Dict[str, object]] = []
+        for item in raw_markers:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label", "")).strip()
+            date_str = str(item.get("date", "")).strip()
+            color = item.get("color") or "#ef6c00"
+            if not label or not date_str:
+                continue
+            ts = pd.to_datetime(date_str, errors="coerce")
+            if pd.isna(ts):
+                continue
+            parsed.append({"label": label, "date": ts.normalize(), "color": color})
+        return parsed
+
     payment_date_col = ensure_existing(col_value("payment_date", "Payment Date"))
     ticket_type_col = ensure_existing(col_value("ticket_type", "Ticket Type"))
     ticket_total_col = ensure_existing(col_value("ticket_total", "Ticket Total"))
@@ -277,6 +325,10 @@ def main() -> None:
         city_preferred,
         city_preferred.replace("\u00e0", "\ufffd") if city_preferred else None,
     )
+    geo_country_cols = resolve_existing_list([country_col] + to_list(extra_country_cfg))
+    geo_city_cols = resolve_existing_list([city_col] + to_list(extra_city_cfg))
+    geo_report_cols = list(dict.fromkeys(geo_country_cols + geo_city_cols))
+    parsed_timeline_markers = parse_timeline_markers(timeline_markers)
     attendee_email_col = ensure_existing(col_value("attendee_email", "Attendee E-mail"))
     buyer_email_col = ensure_existing(col_value("buyer_email", "Buyer E-Mail"))
     order_number_col = ensure_existing(col_value("order_number", "Order Number"))
@@ -356,8 +408,7 @@ def main() -> None:
         numeric_map.get(order_total_col),
         numeric_map.get(col_value("price", "Price")),
         discount_col,
-        country_col,
-        city_col,
+        *geo_report_cols,
     ]
     key_fields = [c for c in key_fields if c]
     report_missing(df, key_fields, "Campi chiave")
@@ -451,6 +502,21 @@ def main() -> None:
                 ax.set_xlabel("Data")
                 ax.set_ylabel("Biglietti")
                 ax.grid(True, alpha=0.3)
+                if parsed_timeline_markers:
+                    max_y = max(float(daily.max()), 1.0)
+                    for idx, marker in enumerate(parsed_timeline_markers):
+                        mdate = marker["date"].date()
+                        ax.axvline(mdate, color=marker["color"], linestyle="--", alpha=0.7, linewidth=1)
+                        ax.text(
+                            mdate,
+                            max_y * (1.02 + idx * 0.05),
+                            marker["label"],
+                            rotation=90,
+                            va="bottom",
+                            ha="center",
+                            fontsize=8,
+                            color=marker["color"],
+                        )
                 fig.tight_layout()
                 save_plot(fig, plots_dir, "vendite_giornaliere", plot_format)
 
@@ -460,39 +526,60 @@ def main() -> None:
                 ax.set_xlabel("Data")
                 ax.set_ylabel("Cumulato")
                 ax.grid(True, alpha=0.3)
+                if parsed_timeline_markers:
+                    max_y = max(float(daily.cumsum().max()), 1.0)
+                    for idx, marker in enumerate(parsed_timeline_markers):
+                        mdate = marker["date"].date()
+                        ax.axvline(mdate, color=marker["color"], linestyle="--", alpha=0.7, linewidth=1)
+                        ax.text(
+                            mdate,
+                            max_y * (1.02 + idx * 0.05),
+                            marker["label"],
+                            rotation=90,
+                            va="bottom",
+                            ha="center",
+                            fontsize=8,
+                            color=marker["color"],
+                        )
                 fig.tight_layout()
                 save_plot(fig, plots_dir, "vendite_cumulative", plot_format)
         else:
             print("\nNessuna data valida per la timeline vendite.")
 
     # === Provenienza geografica ==============================================
-    report_missing(df, [country_col, city_col], "Geografia")
+    report_missing(df, geo_report_cols, "Geografia")
 
-    if country_col in df.columns:
-        by_country = df.groupby(country_col, dropna=False).size().sort_values(ascending=False)
-        print("\nTop paesi:")
+    for col in geo_country_cols:
+        by_country = df.groupby(col, dropna=False).size().sort_values(ascending=False)
+        print(f"\nTop paesi ({col}):")
         print(by_country.head(20))
         if plots_enabled:
-            fig, ax = plt.subplots(figsize=(10, 4))
             country_plot = drop_nan_categories(by_country).head(15)
-            country_plot.plot(kind="bar", ax=ax, color="#6a1b9a")
-            ax.set_title("Top 15 paesi")
-            ax.set_ylabel("Biglietti")
-            fig.tight_layout()
-            save_plot(fig, plots_dir, "top_paesi", plot_format)
+            if country_plot.empty:
+                print(f" - Nessun dato valido per il grafico paesi ({col}).")
+            else:
+                fig, ax = plt.subplots(figsize=(10, 4))
+                country_plot.plot(kind="bar", ax=ax, color="#6a1b9a")
+                ax.set_title(f"Top 15 paesi - {col}")
+                ax.set_ylabel("Biglietti")
+                fig.tight_layout()
+                save_plot(fig, plots_dir, f"top_paesi_{slugify(col)}", plot_format)
 
-    if city_col in df.columns:
-        by_city = df.groupby(city_col, dropna=False).size().sort_values(ascending=False)
-        print("\nTop citt\u00e0:")
+    for col in geo_city_cols:
+        by_city = df.groupby(col, dropna=False).size().sort_values(ascending=False)
+        print(f"\nTop citt\u00e0 ({col}):")
         print(by_city.head(20))
         if plots_enabled:
-            fig, ax = plt.subplots(figsize=(10, 4))
             city_plot = drop_nan_categories(by_city).head(15)
-            city_plot.plot(kind="bar", ax=ax, color="#00838f")
-            ax.set_title("Top 15 citt\u00e0")
-            ax.set_ylabel("Biglietti")
-            fig.tight_layout()
-            save_plot(fig, plots_dir, "top_citta", plot_format)
+            if city_plot.empty:
+                print(f" - Nessun dato valido per il grafico citt\u00e0 ({col}).")
+            else:
+                fig, ax = plt.subplots(figsize=(10, 4))
+                city_plot.plot(kind="bar", ax=ax, color="#00838f")
+                ax.set_title(f"Top 15 citt\u00e0 - {col}")
+                ax.set_ylabel("Biglietti")
+                fig.tight_layout()
+                save_plot(fig, plots_dir, f"top_citta_{slugify(col)}", plot_format)
 
 
     # === Demografia (date di nascita) =========================================
@@ -629,9 +716,10 @@ def main() -> None:
             )
             .sort_values(["revenue", "tickets"], ascending=False)
         )
-    if country_col in df.columns:
-        exports["by_country.csv"] = (
-            df.groupby(country_col, dropna=False)
+    for idx, col in enumerate(geo_country_cols):
+        fname = "by_country.csv" if idx == 0 else f"by_country_{slugify(col)}.csv"
+        exports[fname] = (
+            df.groupby(col, dropna=False)
             .size()
             .to_frame("tickets")
             .sort_values("tickets", ascending=False)
