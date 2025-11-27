@@ -1,10 +1,32 @@
 {
-  "csv_path": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ListaTicketVenduti_12Nov25.csv",
-  "output_dir": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\eda_outputs_test19Nov_3",
+  "csv_path": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ListaTicketVenduti_27Nov25.csv",
+  "output_dir": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ListaTicketVenduti_27Nov25_output",
   "plots": {
     "enabled": true,
     "format": "png"
   },
+  "timeline_markers": [
+    {
+      "date": "2025-09-02",
+      "label": "phase 1 psy artist"
+    },
+    {
+      "date": "2025-11-23",
+      "label": "phase 2 tekno artist"
+    },
+    {
+      "date": "",
+      "label": "early bird start"
+    },
+    {
+      "date": "",
+      "label": "phase 0 start"
+    },
+    {
+      "date": "",
+      "label": "phase 1 start"
+    }
+  ],
   "columns": {
     "event_name": "Event Name",
     "order_number": "Order Number",
@@ -45,6 +67,12 @@
     "ticket_download_url": "Ticket Download Url",
     "ticket_tax": "Ticket Tax"
   },
+  "extra_country_columns": [
+    "Stato di Residenza / Country of Residence (Campi ticket restaurant)"
+  ],
+  "extra_city_columns": [
+    "Citt\u00e0 di Residenza / City of Residence (Campi ticket restaurant)"
+  ],
   "checkin_columns": [
     "Checked-in",
     "Check-ins",
