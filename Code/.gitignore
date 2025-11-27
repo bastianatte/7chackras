@@ -3,8 +3,12 @@ __pycache__/
 *.pyc
 *.pyo
 
+
 # File sistema
 *.DS_Store
 
 # Checkpoint notebook
 *.ipynb_checkpoints/
+
+# Dati/risultati locali
+/Tickets/
