@@ -9,6 +9,3 @@ __pycache__/
 
 # Checkpoint notebook
 *.ipynb_checkpoints/
-
-# Dati/risultati locali
-/Tickets/*pdf
