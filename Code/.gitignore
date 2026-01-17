@@ -9,3 +9,4 @@ __pycache__/
 
 # Checkpoint notebook
 *.ipynb_checkpoints/
+Deleghe/*/
