@@ -1,6 +1,6 @@
 {
-  "csv_path": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ListaTicketVenduti_27Nov25.csv",
-  "output_dir": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\ListaTicketVenduti_27Nov25_output_first_refactoring",
+  "csv_path": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\Libro_Soci_2025-2026\\\\ListaTickets_31.12.25_10_50.csv",
+  "output_dir": "C:\\\\Users\\\\spina\\\\Documents\\\\Other_Codes\\\\7chackras\\\\Documenti\\\\Libro_Soci_2025-2026\\\\match_2026_reports_31.12.25_10_50\\\\EDA_output_31.12.25_10_50",
   "plots": {
     "enabled": true,
     "format": "png"

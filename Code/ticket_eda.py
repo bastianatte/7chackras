@@ -189,7 +189,40 @@ def analyze_geography(
     plot_format: str,
 ) -> None:
     """Analisi e plot per geografia (paesi/citta)."""
-    analyze_geography(df, geo_country_cols, geo_city_cols, plots_enabled, plots_dir, plot_format)
+    geo_report_cols = list(dict.fromkeys(geo_country_cols + geo_city_cols))
+    report_missing(df, geo_report_cols, "Geografia")
+
+    for col in geo_country_cols:
+        by_country = df.groupby(col, dropna=False).size().sort_values(ascending=False)
+        print(f"\nTop paesi ({col}):")
+        print(by_country.head(20))
+        if plots_enabled:
+            country_plot = drop_nan_categories(by_country).head(15)
+            if country_plot.empty:
+                print(f" - Nessun dato valido per il grafico paesi ({col}).")
+            else:
+                fig, ax = plt.subplots(figsize=(10, 4))
+                country_plot.plot(kind="bar", ax=ax, color="#6a1b9a")
+                ax.set_title(f"Top 15 paesi - {col}")
+                ax.set_ylabel("Biglietti")
+                fig.tight_layout()
+                save_plot(fig, plots_dir, f"top_paesi_{slugify(col)}", plot_format)
+
+    for col in geo_city_cols:
+        by_city = df.groupby(col, dropna=False).size().sort_values(ascending=False)
+        print(f"\nTop città ({col}):")
+        print(by_city.head(20))
+        if plots_enabled:
+            city_plot = drop_nan_categories(by_city).head(15)
+            if city_plot.empty:
+                print(f" - Nessun dato valido per il grafico città ({col}).")
+            else:
+                fig, ax = plt.subplots(figsize=(10, 4))
+                city_plot.plot(kind="bar", ax=ax, color="#00838f")
+                ax.set_title(f"Top 15 città - {col}")
+                ax.set_ylabel("Biglietti")
+                fig.tight_layout()
+                save_plot(fig, plots_dir, f"top_citta_{slugify(col)}", plot_format)
 
 
 def export_summary_tables(
@@ -228,6 +261,126 @@ def export_summary_tables(
         print(f"Esportato: {out_path}")
 
 
+def normalize_and_prepare_columns(
+    df_raw: pd.DataFrame,
+    columns_cfg: Dict[str, str],
+    extra_country_cfg: Iterable[str],
+    extra_city_cfg: Iterable[str],
+    checkin_columns: Iterable[str],
+) -> Dict[str, object]:
+    """Normalizza colonne, risolve i nomi e converte numerici/email."""
+    df = df_raw.copy()
+    df.columns = normalize_columns(df.columns)
+
+    def col_value(key: str, fallback: Optional[str]) -> Optional[str]:
+        value = columns_cfg.get(key)
+        return value or fallback
+
+    def ensure_existing(name: Optional[str], *alternatives: Optional[str]) -> Optional[str]:
+        candidates = (name,) + alternatives
+        for candidate in candidates:
+            if candidate and candidate in df.columns:
+                return candidate
+        return name
+
+    def resolve_existing_list(names: Iterable[Optional[str]]) -> List[str]:
+        resolved: List[str] = []
+        for name in names:
+            if not name:
+                continue
+            alt = name.replace("\u00e0", "\ufffd") if "\u00e0" in name else None
+            found = ensure_existing(name, alt)
+            if found and found in df.columns and found not in resolved:
+                resolved.append(found)
+        return resolved
+
+    def to_list(value: object) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        try:
+            return [v for v in value if v is not None]
+        except TypeError:
+            return []
+
+    payment_date_col = ensure_existing(col_value("payment_date", "Payment Date"))
+    ticket_type_col = ensure_existing(col_value("ticket_type", "Ticket Type"))
+    ticket_total_col = ensure_existing(col_value("ticket_total", "Ticket Total"))
+    order_total_col = ensure_existing(col_value("order_total", "Order Total"))
+    discount_col = ensure_existing(col_value("discount_code", "Discount Code"))
+    ticket_discount_col = ensure_existing(col_value("ticket_discount", "Ticket Discount"))
+    country_col = ensure_existing(
+        col_value("country", "Country of residence / Paese di residenza (Campi ticket holder)")
+    )
+    city_preferred = col_value("city", "City of residence / Citt\u00e0 di residenza (Campi ticket holder)")
+    city_col = ensure_existing(
+        city_preferred,
+        city_preferred.replace("\u00e0", "\ufffd") if city_preferred else None,
+    )
+    geo_country_cols = resolve_existing_list([country_col] + to_list(extra_country_cfg))
+    geo_city_cols = resolve_existing_list([city_col] + to_list(extra_city_cfg))
+    attendee_email_col = ensure_existing(col_value("attendee_email", "Attendee E-mail"))
+    buyer_email_col = ensure_existing(col_value("buyer_email", "Buyer E-Mail"))
+    order_number_col = ensure_existing(col_value("order_number", "Order Number"))
+    order_status_col = ensure_existing(col_value("order_status", "Order Status"))
+    dob_preferred = col_value("date_of_birth", "Date of birth / Data di nascita (Campi ticket holder)")
+    dob_col = ensure_existing(
+        dob_preferred,
+        dob_preferred.replace("\u00e0", "\ufffd") if dob_preferred else None,
+    )
+
+    if payment_date_col and payment_date_col in df.columns:
+        df[PARSED_DATE_COL] = df[payment_date_col].map(parse_payment_date)
+    else:
+        df[PARSED_DATE_COL] = pd.NaT
+
+    numeric_targets = set(NUMERIC_CANDIDATES)
+    numeric_targets.update(
+        [
+            ticket_total_col,
+            order_total_col,
+            ticket_discount_col,
+            col_value("ticket_subtotal", "Ticket Subtotal"),
+            col_value("ticket_fee", "Ticket Fee"),
+            col_value("price", "Price"),
+        ]
+    )
+    numeric_map: Dict[str, str] = {}
+    for col_name in filter(None, numeric_targets):
+        if col_name in df.columns:
+            num_col = f"{col_name}_num"
+            df[num_col] = df[col_name].map(to_num)
+            numeric_map[col_name] = num_col
+
+    for email_col in filter(None, [attendee_email_col, buyer_email_col]):
+        if email_col in df.columns:
+            df[email_col] = df[email_col].astype(str).str.strip().str.lower()
+
+    present_checkin_cols = [c for c in checkin_columns if c in df.columns]
+
+    return {
+        "df": df,
+        "payment_date_col": payment_date_col,
+        "ticket_type_col": ticket_type_col,
+        "ticket_total_col": ticket_total_col,
+        "order_total_col": order_total_col,
+        "discount_col": discount_col,
+        "ticket_discount_col": ticket_discount_col,
+        "country_col": country_col,
+        "city_col": city_col,
+        "geo_country_cols": geo_country_cols,
+        "geo_city_cols": geo_city_cols,
+        "attendee_email_col": attendee_email_col,
+        "buyer_email_col": buyer_email_col,
+        "order_number_col": order_number_col,
+        "order_status_col": order_status_col,
+        "dob_col": dob_col,
+        "numeric_map": numeric_map,
+        "present_checkin_cols": present_checkin_cols,
+    }
+
+
 def parse_birth_date(value: object) -> pd.Timestamp:
     if pd.isna(value):
         return pd.NaT
@@ -240,6 +393,23 @@ def parse_birth_date(value: object) -> pd.Timestamp:
         except ValueError:
             continue
     return pd.NaT
+
+
+def parse_timeline_markers(raw_markers: Iterable[object]) -> List[Dict[str, object]]:
+    parsed: List[Dict[str, object]] = []
+    for item in raw_markers:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label", "")).strip()
+        date_str = str(item.get("date", "")).strip()
+        color = item.get("color") or "#ef6c00"
+        if not label or not date_str:
+            continue
+        ts = pd.to_datetime(date_str, errors="coerce")
+        if pd.isna(ts):
+            continue
+        parsed.append({"label": label, "date": ts.normalize(), "color": color})
+    return parsed
 
 
 def write_missing_report(
@@ -554,6 +724,8 @@ def main() -> None:
             ax.set_title("Distribuzione Order Status")
             ax.set_ylabel("Ordini")
             ax.set_xlabel("Status")
+            for container in ax.containers:
+                ax.bar_label(container, padding=2)
             fig.tight_layout()
             save_plot(fig, plots_dir, "order_status_distribution", plot_format)
 
@@ -588,7 +760,7 @@ def main() -> None:
         ts = df.dropna(subset=[PARSED_DATE_COL]).copy()
         if not ts.empty:
             ts["date"] = ts[PARSED_DATE_COL].dt.date
-            daily = ts.groupby("date").size()
+            daily = ts.groupby("date").size().sort_index()
             print("\nTimeline vendite (prime righe):")
             print(daily.head())
             if plots_enabled:
@@ -653,11 +825,15 @@ def main() -> None:
             print(birth_year_counts.head(20))
 
             if plots_enabled:
+                age_years = ages.dropna().astype(float).round(0).astype(int)
+                age_counts = age_years.value_counts().sort_index()
+
                 fig, ax = plt.subplots(figsize=(8, 4))
-                ages.plot(kind="hist", bins=min(10, len(dob_valid)), ax=ax, color="#5d4037")
+                age_counts.plot(kind="bar", ax=ax, color="#5d4037")
                 ax.set_title("Distribuzione Eta partecipanti")
                 ax.set_xlabel("Eta (anni)")
                 ax.set_ylabel("Partecipanti")
+                ax.set_xticklabels(age_counts.index, rotation=45, ha="right")
                 fig.tight_layout()
                 save_plot(fig, plots_dir, "eta_partecipanti", plot_format)
 
