@@ -12,6 +12,68 @@
         "--config",
         "${workspaceFolder}/Code/eda_config.json"
       ]
+    },
+    {
+      "name": "Match Soci 2026",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Code/members_ticket_match.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--members",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/Libro_soci_2025.csv",
+        "--tickets",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/ListaTickets_31.12.25_10_50.csv",
+        "--output-dir",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/match_2026_reports_31.12.25_10_50"
+      ]
+    },
+    {
+      "name": "Ticket Phase Summary",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Code/ticket_phase_summary.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--early-phase0",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/ListaTicketVenduti_27Nov25.csv",
+        "--phase1-other",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/Attendee_List_19.12.25_phase1+Chr+ambassPSYKY.csv",
+        "--output",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/TicketsSummary/ticket_phase_summary.csv"
+      ]
+    },
+    {
+      "name": "Ticket Phase Summary (single file)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Code/ticket_phase_summary.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--single-file",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/ListaTickets_31.12.25_10_50.csv",
+        "--output",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/TicketsSummary/ticket_phase_summary_31.12.25_10_50.csv"
+      ]
+    },
+    {
+      "name": "Merge Ticket Exports",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Code/tickets_merge.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--left",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/ListaTicketVenduti_27Nov25.csv",
+        "--right",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/Attendee_List_19.12.25_phase1+Chr+ambassPSYKY.csv",
+        "--output",
+        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/merged_19.12.25.csv"
+      ]
     }
   ]
 }
