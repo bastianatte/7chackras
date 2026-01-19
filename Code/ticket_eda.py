@@ -258,6 +258,25 @@ def analyze_geography(
                 fig.tight_layout()
                 save_plot(fig, plots_dir, f"top_paesi_{slugify(col)}", plot_format)
 
+            # Pie chart Italia vs estero (esclude valori NaN/vuoti)
+            cleaned = drop_nan_categories(by_country)
+            if not cleaned.empty:
+                labels_norm = cleaned.index.astype(str).str.strip().str.lower()
+                italy_mask = labels_norm.isin({"italia", "italy"})
+                italy_count = int(cleaned[italy_mask].sum())
+                abroad_count = int(cleaned[~italy_mask].sum())
+                if italy_count + abroad_count > 0:
+                    fig, ax = plt.subplots(figsize=(6, 4))
+                    ax.pie(
+                        [italy_count, abroad_count],
+                        labels=["Italia", "Estero"],
+                        autopct="%1.1f%%",
+                        colors=["#2e7d32", "#1565c0"],
+                    )
+                    ax.set_title(f"Italia vs Estero - {col}")
+                    fig.tight_layout()
+                    save_plot(fig, plots_dir, f"italia_estero_{slugify(col)}", plot_format)
+
     for col in geo_city_cols:
         by_city = df.groupby(col, dropna=False).size().sort_values(ascending=False)
         print(f"\nTop città ({col}):")
