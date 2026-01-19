@@ -23,6 +23,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402  (dipende dal backend impostato)
+from matplotlib.ticker import FuncFormatter, MultipleLocator
 from datetime import datetime
 
 READ_KWARGS: Dict[str, object] = {
@@ -251,10 +252,16 @@ def analyze_geography(
             if country_plot.empty:
                 print(f" - Nessun dato valido per il grafico paesi ({col}).")
             else:
-                fig, ax = plt.subplots(figsize=(10, 4))
-                country_plot.plot(kind="bar", ax=ax, color="#6a1b9a")
-                ax.set_title(f"Top 15 paesi - {col}")
-                ax.set_ylabel("Biglietti")
+                fig, ax = plt.subplots(figsize=(10, 6))
+                country_plot.plot(kind="barh", ax=ax, color="#6a1b9a")
+                ax.set_title("")
+                ax.set_xlabel("Biglietti")
+                ax.set_ylabel("Paese di provenienza")
+                for bar in ax.patches:
+                    bar.set_height(0.9)
+                ax.tick_params(axis="both", labelsize=12)
+                ax.xaxis.label.set_size(13)
+                ax.yaxis.label.set_size(13)
                 fig.tight_layout()
                 save_plot(fig, plots_dir, f"top_paesi_{slugify(col)}", plot_format)
             cleaned = drop_nan_categories(by_country)
@@ -353,10 +360,16 @@ def analyze_geography(
             if city_plot.empty:
                 print(f" - Nessun dato valido per il grafico città ({col}).")
             else:
-                fig, ax = plt.subplots(figsize=(10, 4))
-                city_plot.plot(kind="bar", ax=ax, color="#00838f")
-                ax.set_title(f"Top 15 città - {col}")
-                ax.set_ylabel("Biglietti")
+                fig, ax = plt.subplots(figsize=(10, 7))
+                city_plot.plot(kind="barh", ax=ax, color="#00838f")
+                ax.set_title("")
+                ax.set_xlabel("Biglietti")
+                ax.set_ylabel("Città di provenienza")
+                for bar in ax.patches:
+                    bar.set_height(0.9)
+                ax.tick_params(axis="both", labelsize=12)
+                ax.xaxis.label.set_size(13)
+                ax.yaxis.label.set_size(13)
                 fig.tight_layout()
                 save_plot(fig, plots_dir, f"top_citta_{slugify(col)}", plot_format)
 
@@ -1146,20 +1159,28 @@ def main() -> None:
                 age_years = ages.dropna().astype(float).round(0).astype(int)
                 age_counts = age_years.value_counts().sort_index()
 
-                fig, ax = plt.subplots(figsize=(8, 4))
-                age_counts.plot(kind="bar", ax=ax, color="#5d4037")
-                ax.set_title("Distribuzione Eta partecipanti")
-                ax.set_xlabel("Eta (anni)")
-                ax.set_ylabel("Partecipanti")
-                ax.set_xticklabels(age_counts.index, rotation=45, ha="right")
+                fig, ax = plt.subplots(figsize=(10, 9))
+                ax.barh(age_counts.index.astype(str), age_counts.values, color="#5d4037", height=0.9)
+                ax.set_xlabel("Partecipanti")
+                ax.set_ylabel("Eta (anni)")
+                ax.xaxis.set_major_locator(MultipleLocator(5))
+                ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x)}"))
+                ax.tick_params(axis="both", labelsize=12)
+                ax.xaxis.label.set_size(13)
+                ax.yaxis.label.set_size(13)
                 fig.tight_layout()
                 save_plot(fig, plots_dir, "eta_partecipanti", plot_format)
 
-                fig, ax = plt.subplots(figsize=(8, 4))
-                birth_year_counts.tail(40).plot(kind="bar", ax=ax, color="#3949ab")
-                ax.set_title("Anno di nascita (ultimi 40 anni)")
-                ax.set_xlabel("Anno")
-                ax.set_ylabel("Partecipanti")
+                fig, ax = plt.subplots(figsize=(10, 12))
+                tail_years = birth_year_counts.tail(40)
+                ax.barh(tail_years.index.astype(str), tail_years.values, color="#3949ab", height=0.9)
+                ax.set_xlabel("Partecipanti")
+                ax.set_ylabel("Anno")
+                ax.xaxis.set_major_locator(MultipleLocator(5))
+                ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x)}"))
+                ax.tick_params(axis="both", labelsize=12)
+                ax.xaxis.label.set_size(13)
+                ax.yaxis.label.set_size(13)
                 fig.tight_layout()
                 save_plot(fig, plots_dir, "nascite_per_anno", plot_format)
 
