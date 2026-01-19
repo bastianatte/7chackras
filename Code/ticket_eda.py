@@ -986,12 +986,26 @@ def main() -> None:
                     )
                     .sort_values(["revenue", "tickets"], ascending=False)
                 )
+                total_row = pd.DataFrame(
+                    {
+                        "tickets": [amb_table["tickets"].sum()],
+                        "revenue": [amb_table["revenue"].sum()],
+                    },
+                    index=["TOTAL"],
+                )
+                amb_table = pd.concat([amb_table, total_row])
                 amb_table = amb_table.rename(columns={"revenue": "Total Amount (€)"})
                 amb_table["Total Amount (€)"] = amb_table["Total Amount (€)"].map(format_eur)
                 amb_path = output_dir / "ambassador_sales.csv"
                 amb_table.to_csv(amb_path, encoding="utf-8")
                 print(f"\nReport ambassador salvato in: {amb_path}")
-                save_table_image(amb_table, plots_dir, "table_ambassador_sales", plot_format)
+                save_table_image(
+                    amb_table,
+                    plots_dir,
+                    "table_ambassador_sales",
+                    plot_format,
+                    highlight_value="TOTAL",
+                )
 
     # === Payment Gateway =====================================================
     if payment_gateway_col and payment_gateway_col in df.columns:
