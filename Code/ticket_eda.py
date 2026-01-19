@@ -257,8 +257,56 @@ def analyze_geography(
                 ax.set_ylabel("Biglietti")
                 fig.tight_layout()
                 save_plot(fig, plots_dir, f"top_paesi_{slugify(col)}", plot_format)
+            cleaned = drop_nan_categories(by_country)
+            if not cleaned.empty:
+                labels_norm = cleaned.index.astype(str).str.strip().str.lower()
+                italy_mask = labels_norm.isin({"italia", "italy"})
+                italy_count = int(cleaned[italy_mask].sum())
+                abroad_count = int(cleaned[~italy_mask].sum())
+                if italy_count + abroad_count > 0:
+                    fig, ax = plt.subplots(figsize=(5.5, 5))
+                    pie_sizes = [italy_count, abroad_count]
+                    pie_labels = ["Italy", "Abroad"]
+                    pie_colors = ["#00b050", "#1565c0"]
 
-            # Pie chart Italia vs estero (esclude valori NaN/vuoti)
+                    def make_autopct(labels: list[str]) -> callable:
+                        def _autopct(pct: float) -> str:
+                            if not labels:
+                                return f"{pct:.1f}%"
+                            label = labels.pop(0)
+                            return f"{label}\n{pct:.1f}%"
+
+                        return _autopct
+
+                    pie_common = dict(
+                        labels=None,
+                        autopct=make_autopct(pie_labels.copy()),
+                        startangle=90,
+                        counterclock=False,
+                        colors=pie_colors,
+                        explode=(0.02, 0.02),
+                        wedgeprops={"edgecolor": "white"},
+                        pctdistance=0.55,
+                    )
+
+                    fig, ax = plt.subplots(figsize=(5.5, 5))
+                    ax.pie(pie_sizes, textprops={"fontsize": 12, "weight": "bold", "color": "#111"}, **pie_common)
+                    ax.axis("equal")
+                    ax.set_title("Italy vs Abroad")
+                    fig.tight_layout()
+                    save_plot(fig, plots_dir, f"italy_abroad_{slugify(col)}_black", plot_format)
+
+                    fig, ax = plt.subplots(figsize=(5.5, 5))
+                    ax.pie(
+                        pie_sizes,
+                        textprops={"fontsize": 12, "weight": "bold", "color": "#fff"},
+                        **{**pie_common, "autopct": make_autopct(pie_labels.copy())},
+                    )
+                    ax.axis("equal")
+                    ax.set_title("Italy vs Abroad")
+                    fig.tight_layout()
+                    save_plot(fig, plots_dir, f"italy_abroad_{slugify(col)}_white", plot_format)
+
             cleaned = drop_nan_categories(by_country)
             if not cleaned.empty:
                 labels_norm = cleaned.index.astype(str).str.strip().str.lower()
@@ -269,11 +317,30 @@ def analyze_geography(
                     fig, ax = plt.subplots(figsize=(6, 4))
                     ax.pie(
                         [italy_count, abroad_count],
-                        labels=["Italia", "Estero"],
+                        labels=["Italy", "Abroad"],
                         autopct="%1.1f%%",
                         colors=["#2e7d32", "#1565c0"],
                     )
-                    ax.set_title(f"Italia vs Estero - {col}")
+                    ax.set_title("Italy vs Abroad")
+                    fig.tight_layout()
+                    save_plot(fig, plots_dir, f"italia_estero_{slugify(col)}", plot_format)
+
+            # Pie chart Italy vs abroad (esclude valori NaN/vuoti)
+            cleaned = drop_nan_categories(by_country)
+            if not cleaned.empty:
+                labels_norm = cleaned.index.astype(str).str.strip().str.lower()
+                italy_mask = labels_norm.isin({"italia", "italy"})
+                italy_count = int(cleaned[italy_mask].sum())
+                abroad_count = int(cleaned[~italy_mask].sum())
+                if italy_count + abroad_count > 0:
+                    fig, ax = plt.subplots(figsize=(6, 4))
+                    ax.pie(
+                        [italy_count, abroad_count],
+                        labels=["Italy", "Abroad"],
+                        autopct="%1.1f%%",
+                        colors=["#2e7d32", "#1565c0"],
+                    )
+                    ax.set_title("Italy vs Abroad")
                     fig.tight_layout()
                     save_plot(fig, plots_dir, f"italia_estero_{slugify(col)}", plot_format)
 
@@ -1053,40 +1120,7 @@ def main() -> None:
             print("\nNessuna data valida per la timeline vendite.")
 
     # === Provenienza geografica ==============================================
-    report_missing(df, geo_report_cols, "Geografia")
-
-    for col in geo_country_cols:
-        by_country = df.groupby(col, dropna=False).size().sort_values(ascending=False)
-        print(f"\nTop paesi ({col}):")
-        print(by_country.head(20))
-        if plots_enabled:
-            country_plot = drop_nan_categories(by_country).head(15)
-            if country_plot.empty:
-                print(f" - Nessun dato valido per il grafico paesi ({col}).")
-            else:
-                fig, ax = plt.subplots(figsize=(10, 4))
-                country_plot.plot(kind="bar", ax=ax, color="#6a1b9a")
-                ax.set_title(f"Top 15 paesi - {col}")
-                ax.set_ylabel("Biglietti")
-                fig.tight_layout()
-                save_plot(fig, plots_dir, f"top_paesi_{slugify(col)}", plot_format)
-
-    for col in geo_city_cols:
-        by_city = df.groupby(col, dropna=False).size().sort_values(ascending=False)
-        print(f"\nTop citt\u00e0 ({col}):")
-        print(by_city.head(20))
-        if plots_enabled:
-            city_plot = drop_nan_categories(by_city).head(15)
-            if city_plot.empty:
-                print(f" - Nessun dato valido per il grafico citt\u00e0 ({col}).")
-            else:
-                fig, ax = plt.subplots(figsize=(10, 4))
-                city_plot.plot(kind="bar", ax=ax, color="#00838f")
-                ax.set_title(f"Top 15 citt\u00e0 - {col}")
-                ax.set_ylabel("Biglietti")
-                fig.tight_layout()
-                save_plot(fig, plots_dir, f"top_citta_{slugify(col)}", plot_format)
-
+    analyze_geography(df, geo_country_cols, geo_city_cols, plots_enabled, plots_dir, plot_format)
 
     # === Demografia (date di nascita) =========================================
     if dob_col in df.columns:
