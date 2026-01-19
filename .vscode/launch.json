@@ -22,11 +22,11 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--members",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/Libro_soci_2025.csv",
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/Libro_soci_2025.csv",
         "--tickets",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/ListaTickets_31.12.25_10_50.csv",
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/ListaTickets_31.12.25_10_50.csv",
         "--output-dir",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/match_2026_reports_31.12.25_10_50"
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/match_2026_reports_31.12.25_10_50_updated_2"
       ]
     },
     {
@@ -38,11 +38,11 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--early-phase0",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/ListaTicketVenduti_27Nov25.csv",
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/ListaTicketVenduti_27Nov25.csv",
         "--phase1-other",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/Attendee_List_19.12.25_phase1+Chr+ambassPSYKY.csv",
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/Attendee_List_19.12.25_phase1+Chr+ambassPSYKY.csv",
         "--output",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/TicketsSummary/ticket_phase_summary.csv"
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/TicketsSummary/ticket_phase_summary.csv"
       ]
     },
     {
@@ -54,9 +54,9 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--single-file",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/ListaTickets_31.12.25_10_50.csv",
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/ListaTickets_31.12.25_10_50.csv",
         "--output",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/TicketsSummary/ticket_phase_summary_31.12.25_10_50.csv"
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/TicketsSummary/ticket_phase_summary_31.12.25_10_50.csv"
       ]
     },
     {
@@ -68,11 +68,11 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--left",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/ListaTicketVenduti_27Nov25.csv",
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/ListaTicketVenduti_27Nov25.csv",
         "--right",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/Attendee_List_19.12.25_phase1+Chr+ambassPSYKY.csv",
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/Attendee_List_19.12.25_phase1+Chr+ambassPSYKY.csv",
         "--output",
-        "${workspaceFolder}/Documenti/Libro_Soci_2025-2026/merged_19.12.25.csv"
+        "${workspaceFolder}/output/Libro_Soci_2025-2026/merged_19.12.25.csv"
       ]
     }
   ]
