@@ -74,6 +74,18 @@
         "--output",
         "${workspaceFolder}/output/Libro_Soci_2025-2026/merged_19.12.25.csv"
       ]
+    },
+    {
+      "name": "Ticket Paid Verified",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Code/tickets_paid_filter.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--input",
+        "${workspaceFolder}/Documenti/Tickets/Attendee_List_Paid_19-01-26_12-15.csv"
+      ]
     }
   ]
 }
