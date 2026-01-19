@@ -333,6 +333,14 @@ def export_summary_tables(
             )
             .sort_values(["revenue", "tickets"], ascending=False)
         )
+        total_row = pd.DataFrame(
+            {
+                "tickets": [by_gateway["tickets"].sum()],
+                "revenue": [by_gateway["revenue"].sum()],
+            },
+            index=["TOTAL"],
+        )
+        by_gateway = pd.concat([by_gateway, total_row])
         by_gateway = by_gateway.rename(columns={"revenue": "Total Amount (€)"})
         by_gateway["Total Amount (€)"] = by_gateway["Total Amount (€)"].map(format_eur)
         exports["by_payment_gateway.csv"] = by_gateway
@@ -345,6 +353,8 @@ def export_summary_tables(
         highlight = None
         if name == "by_type.csv":
             widen_first = True
+            highlight = "TOTAL"
+        if name == "by_payment_gateway.csv":
             highlight = "TOTAL"
         save_table_image(
             table,
@@ -942,13 +952,15 @@ def main() -> None:
             index=["TOTAL"],
         )
         phase_table = pd.concat([phase_table, total_row])
+        phase_table = phase_table.rename(columns={"amount_eur": "Total Amount (€)"})
+        phase_table["Total Amount (€)"] = phase_table["Total Amount (€)"].map(format_eur)
         phase_path = output_dir / "phase_revenue_from_ticket_type.csv"
         phase_table.to_csv(phase_path, encoding="utf-8")
         print(f"\nRicavi per fase (da Ticket Type) salvati in: {phase_path}")
         save_table_image(phase_table, plots_dir, "table_phase_revenue_from_ticket_type", plot_format)
         if "TOTAL" in phase_table.index:
-            total_eur = phase_table.loc["TOTAL", "amount_eur"]
-            print(f"Totale incassato (da Ticket Type): {total_eur:,.2f}")
+            total_eur = phase_table.loc["TOTAL", "Total Amount (€)"]
+            print(f"Totale incassato (da Ticket Type): {total_eur}")
 
     # === Ambassador summary ==================================================
     if ticket_type_col in df.columns or ticket_id_col in df.columns:
@@ -974,6 +986,8 @@ def main() -> None:
                     )
                     .sort_values(["revenue", "tickets"], ascending=False)
                 )
+                amb_table = amb_table.rename(columns={"revenue": "Total Amount (€)"})
+                amb_table["Total Amount (€)"] = amb_table["Total Amount (€)"].map(format_eur)
                 amb_path = output_dir / "ambassador_sales.csv"
                 amb_table.to_csv(amb_path, encoding="utf-8")
                 print(f"\nReport ambassador salvato in: {amb_path}")

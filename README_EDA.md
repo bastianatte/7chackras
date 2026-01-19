@@ -27,13 +27,15 @@ Tutte le statistiche sono calcolate **solo** su righe con `Order Status = Paid`.
   Immagine: `plots/table_by_payment_gateway.png`.
 
 - `phase_revenue_from_ticket_type.csv`
-  Somma in euro per fase (phase 0, phase 1, etc) estratta dal testo di `Ticket Type`.
+  Somma in euro per fase (phase 0, phase 1, etc) estratta dal testo di `Ticket Type`
+  in colonna `Total Amount (€)` con formato euro.
   Include anche il totale generale e quante righe non hanno importo nel testo.
   Immagine: `plots/table_phase_revenue_from_ticket_type.png`.
 
 - `ambassador_sales.csv`
   Vendite per ambassador, riconosciuti quando `Ticket Type` o `Ticket ID`
   contengono la stringa "Ambassador NOME".
+  La colonna `Total Amount (€)` e' formattata in euro.
   Immagine: `plots/table_ambassador_sales.png`.
 
 - `column_missing_report.txt`
