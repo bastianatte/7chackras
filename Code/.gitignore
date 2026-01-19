@@ -6,9 +6,10 @@ __pycache__/
 
 # File sistema
 *.DS_Store
-
+*pdf
 # Checkpoint notebook
 *.ipynb_checkpoints/
 
 # cartelle
 Deleghe/
+

@@ -1,7 +1,9 @@
 # Output esterni (tutto ciò che viene generato sotto Documenti)
-Documenti/
 Tickets/
 Biglietti/
+Documenti/*csv
+Documenti/
+output/
 
 # Repo-level cache comuni
 Code/__pycache__/
