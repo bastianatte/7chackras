@@ -289,17 +289,25 @@ def export_summary_tables(
     """Esporta CSV di riepilogo."""
     exports: Dict[str, pd.DataFrame] = {}
     if ticket_type_col in df.columns:
-        exports["by_type.csv"] = (
+        by_type = (
             df.groupby(ticket_type_col, dropna=False)
             .agg(
                 tickets=(ticket_type_col, "size"),
                 revenue=(ticket_total_num, "sum") if ticket_total_num in df.columns else (ticket_type_col, "size"),
-                avg_price=(ticket_total_num, "mean")
-                if ticket_total_num in df.columns
-                else (ticket_type_col, "size"),
             )
             .sort_values(["revenue", "tickets"], ascending=False)
         )
+        total_row = pd.DataFrame(
+            {
+                "tickets": [by_type["tickets"].sum()],
+                "revenue": [by_type["revenue"].sum()],
+            },
+            index=["TOTAL"],
+        )
+        by_type = pd.concat([by_type, total_row])
+        by_type = by_type.rename(columns={"revenue": "Total Amount (€)"})
+        by_type["Total Amount (€)"] = by_type["Total Amount (€)"].map(format_eur)
+        exports["by_type.csv"] = by_type
     for idx, col in enumerate(geo_country_cols):
         fname = "by_country.csv" if idx == 0 else f"by_country_{slugify(col)}.csv"
         exports[fname] = (
@@ -317,7 +325,7 @@ def export_summary_tables(
             .sort_values("tickets", ascending=False)
         )
     if payment_gateway_col and payment_gateway_col in df.columns:
-        exports["by_payment_gateway.csv"] = (
+        by_gateway = (
             df.groupby(payment_gateway_col, dropna=False)
             .agg(
                 tickets=(payment_gateway_col, "size"),
@@ -325,12 +333,27 @@ def export_summary_tables(
             )
             .sort_values(["revenue", "tickets"], ascending=False)
         )
+        by_gateway = by_gateway.rename(columns={"revenue": "Total Amount (€)"})
+        by_gateway["Total Amount (€)"] = by_gateway["Total Amount (€)"].map(format_eur)
+        exports["by_payment_gateway.csv"] = by_gateway
 
     for name, table in exports.items():
         out_path = output_dir / name
         table.to_csv(out_path, encoding="utf-8")
         print(f"Esportato: {out_path}")
-        save_table_image(table, plots_dir, f"table_{Path(name).stem}", plot_format)
+        widen_first = False
+        highlight = None
+        if name == "by_type.csv":
+            widen_first = True
+            highlight = "TOTAL"
+        save_table_image(
+            table,
+            plots_dir,
+            f"table_{Path(name).stem}",
+            plot_format,
+            highlight_value=highlight,
+            widen_first_col=widen_first,
+        )
 
 
 def normalize_and_prepare_columns(
@@ -570,7 +593,14 @@ def save_plot(fig: plt.Figure, destination: Path, name: str, fmt: str) -> None:
     plt.close(fig)
 
 
-def save_table_image(df: pd.DataFrame, destination: Path, name: str, fmt: str) -> None:
+def save_table_image(
+    df: pd.DataFrame,
+    destination: Path,
+    name: str,
+    fmt: str,
+    highlight_value: str | None = None,
+    widen_first_col: bool = False,
+) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     if df.empty:
         return
@@ -579,20 +609,44 @@ def save_table_image(df: pd.DataFrame, destination: Path, name: str, fmt: str) -
     shown = shown.head(50)
     fig, ax = plt.subplots(figsize=(10, max(2.5, 0.35 * len(shown))))
     ax.axis("off")
+    col_widths = None
+    if widen_first_col and len(shown.columns) > 1:
+        first = 0.6
+        rest = (1.0 - first) / (len(shown.columns) - 1)
+        col_widths = [first] + [rest] * (len(shown.columns) - 1)
     table = ax.table(
         cellText=shown.values,
         colLabels=shown.columns,
         loc="center",
         cellLoc="left",
+        colWidths=col_widths,
     )
     table.auto_set_font_size(False)
     table.set_fontsize(8)
     table.scale(1, 1.2)
+    if highlight_value:
+        for row_idx, row in enumerate(shown.values, start=1):
+            if str(row[0]).strip().lower() == highlight_value.lower():
+                for col_idx in range(len(shown.columns)):
+                    table[(row_idx, col_idx)].set_text_props(weight="bold")
+                break
     out_path = destination / f"{name}.{fmt}"
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
     print(f"Tabella salvata: {out_path}")
     plt.close(fig)
+
+
+def format_eur(value: object) -> str:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return ""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return ""
+    rounded = round(amount)
+    formatted = f"{rounded:,.0f}".replace(",", ".")
+    return f"{formatted} €"
 
 
 def main() -> None:
@@ -854,7 +908,6 @@ def main() -> None:
         )
         print("\nVendite per tipo di ticket:")
         print(by_type.head(20))
-        save_table_image(by_type, plots_dir, "table_by_type", plot_format)
 
         if plots_enabled:
             type_counts = by_type["tickets"].sort_values(ascending=True)
@@ -938,7 +991,6 @@ def main() -> None:
         )
         print("\nDistribuzione Payment Gateway:")
         print(by_gateway.head(20))
-        save_table_image(by_gateway, plots_dir, "table_by_payment_gateway", plot_format)
 
     # Timeline vendite
     if PARSED_DATE_COL in df.columns:

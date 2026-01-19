@@ -9,7 +9,8 @@ Tutte le statistiche sono calcolate **solo** su righe con `Order Status = Paid`.
   Dataset filtrato su Paid, con colonne normalizzate e campi numerici convertiti.
 
 - `by_type.csv`
-  Biglietti per `Ticket Type` con conteggi e ricavi.
+  Biglietti per `Ticket Type` con conteggi e totale in euro.
+  La colonna `avg_price` non e' piu' presente; viene aggiunta la riga `TOTAL`.
   Immagine: `plots/table_by_type.png`.
 
 - `by_country*.csv`
@@ -22,7 +23,7 @@ Tutte le statistiche sono calcolate **solo** su righe con `Order Status = Paid`.
   Immagine: `plots/table_by_city*.png`.
 
 - `by_payment_gateway.csv`
-  Conteggi per `Payment Gateway` con ricavi.
+  Conteggi per `Payment Gateway` con totale in euro.
   Immagine: `plots/table_by_payment_gateway.png`.
 
 - `phase_revenue_from_ticket_type.csv`

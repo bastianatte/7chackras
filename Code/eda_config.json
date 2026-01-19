@@ -1,6 +1,6 @@
 {
-  "csv_path": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/Attendee_List_Paid_19-01-26_12-15.csv",
-  "output_dir": "C:/Users/spina/Documents/Other_Codes/7chackras/output/Attendee_List_Paid_19-01-26_12-15",
+  "csv_path": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/Attendee_List_Paid_VERIFIED_FLAT__19Gen_16.18pm.csv",
+  "output_dir": "C:/Users/spina/Documents/Other_Codes/7chackras/output/Attendee_List_Paid_VERIFIED_FLAT__19Gen_16.18pm_updated.csv",
   "plots": {
     "enabled": true,
     "format": "png"

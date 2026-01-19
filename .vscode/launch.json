@@ -84,7 +84,7 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--input",
-        "${workspaceFolder}/Documenti/Tickets/Attendee_List_Paid_19-01-26_12-15.csv"
+        "${workspaceFolder}/Documenti/Tickets/Attendee_List_Paid_19Gen_16.18pm.csv"
       ]
     },
     {
@@ -96,7 +96,7 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--input",
-        "${workspaceFolder}/Documenti/Tickets/Attendee_List_Paid_19-01-26_12-15.csv"
+        "${workspaceFolder}/Documenti/Tickets/Attendee_List_Any-GianlucaIarlori.csv"
       ]
     }
   ]
