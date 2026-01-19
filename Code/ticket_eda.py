@@ -173,7 +173,7 @@ def extract_ticket_type_amount(value: object) -> float:
     if value is None:
         return np.nan
     text = str(value)
-    match = re.search(r"(\d+(?:[.,]\d+)?)\s*€", text)
+    match = re.search("(\d+(?:[.,]\d+)?)\s*(?:\u20ac|eur|\u0192'\u00aa)", text, flags=re.IGNORECASE)
     if not match:
         return np.nan
     raw = match.group(1).replace(",", ".")
@@ -394,7 +394,7 @@ def export_summary_tables(
                 tickets=(ticket_type_col, "size"),
                 revenue=(ticket_total_num, "sum") if ticket_total_num in df.columns else (ticket_type_col, "size"),
             )
-            .sort_values(["revenue", "tickets"], ascending=False)
+            .sort_values(["tickets"], ascending=False)
         )
         total_row = pd.DataFrame(
             {
@@ -430,7 +430,7 @@ def export_summary_tables(
                 tickets=(payment_gateway_col, "size"),
                 revenue=(ticket_total_num, "sum") if ticket_total_num in df.columns else (payment_gateway_col, "size"),
             )
-            .sort_values(["revenue", "tickets"], ascending=False)
+            .sort_values(["tickets"], ascending=False)
         )
         total_row = pd.DataFrame(
             {
@@ -450,9 +450,13 @@ def export_summary_tables(
         print(f"Esportato: {out_path}")
         widen_first = False
         highlight = None
+        narrow_numeric = False
+        font_size = 8
         if name == "by_type.csv":
             widen_first = True
             highlight = "TOTAL"
+            narrow_numeric = True
+            font_size = 11
         if name == "by_payment_gateway.csv":
             highlight = "TOTAL"
         save_table_image(
@@ -462,6 +466,8 @@ def export_summary_tables(
             plot_format,
             highlight_value=highlight,
             widen_first_col=widen_first,
+            narrow_numeric_cols=narrow_numeric,
+            font_size=font_size,
         )
 
 
@@ -709,6 +715,8 @@ def save_table_image(
     fmt: str,
     highlight_value: str | None = None,
     widen_first_col: bool = False,
+    narrow_numeric_cols: bool = False,
+    font_size: int = 8,
 ) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     if df.empty:
@@ -716,13 +724,18 @@ def save_table_image(
     shown = df.copy()
     shown = shown.reset_index() if shown.index.name or shown.index.names else shown.reset_index(drop=False)
     shown = shown.head(50)
+    if shown.columns[0] == "index":
+        shown = shown.rename(columns={"index": ""})
     fig, ax = plt.subplots(figsize=(10, max(2.5, 0.35 * len(shown))))
     ax.axis("off")
     col_widths = None
     if widen_first_col and len(shown.columns) > 1:
-        first = 0.6
-        rest = (1.0 - first) / (len(shown.columns) - 1)
-        col_widths = [first] + [rest] * (len(shown.columns) - 1)
+        if narrow_numeric_cols and len(shown.columns) == 3:
+            col_widths = [0.7, 0.15, 0.15]
+        else:
+            first = 0.6
+            rest = (1.0 - first) / (len(shown.columns) - 1)
+            col_widths = [first] + [rest] * (len(shown.columns) - 1)
     table = ax.table(
         cellText=shown.values,
         colLabels=shown.columns,
@@ -731,8 +744,13 @@ def save_table_image(
         colWidths=col_widths,
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(8)
+    table.set_fontsize(font_size)
     table.scale(1, 1.2)
+    if narrow_numeric_cols:
+        for col_idx in range(1, len(shown.columns)):
+            table[(0, col_idx)]._loc = "center"
+            for row_idx in range(1, len(shown) + 1):
+                table[(row_idx, col_idx)]._loc = "center"
     if highlight_value:
         for row_idx, row in enumerate(shown.values, start=1):
             if str(row[0]).strip().lower() == highlight_value.lower():
@@ -1013,7 +1031,7 @@ def main() -> None:
                 if ticket_total_num in df.columns
                 else (ticket_type_col, "size"),
             )
-            .sort_values(["revenue", "tickets"], ascending=False)
+            .sort_values(["tickets"], ascending=False)
         )
         print("\nVendite per tipo di ticket:")
         print(by_type.head(20))
@@ -1083,7 +1101,7 @@ def main() -> None:
                         if ticket_total_num in df.columns
                         else ("ambassador_name", "size"),
                     )
-                    .sort_values(["revenue", "tickets"], ascending=False)
+                    .sort_values(["tickets"], ascending=False)
                 )
                 total_row = pd.DataFrame(
                     {
@@ -1114,7 +1132,7 @@ def main() -> None:
                 tickets=(payment_gateway_col, "size"),
                 revenue=(ticket_total_num, "sum") if ticket_total_num in df.columns else (payment_gateway_col, "size"),
             )
-            .sort_values(["revenue", "tickets"], ascending=False)
+            .sort_values(["tickets"], ascending=False)
         )
         print("\nDistribuzione Payment Gateway:")
         print(by_gateway.head(20))
