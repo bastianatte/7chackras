@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 from typing import Dict, Iterable, List, Optional
 
 import numpy as np
@@ -132,6 +133,55 @@ def slugify(text: str) -> str:
     return safe.strip("_")[:80]
 
 
+def extract_ambassador_name(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    match = re.search(r"\bambassador\b\s*[:\-]?\s*(.+)", text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    tail = match.group(1).strip()
+    for sep in (" - ", " | ", " / ", "(", "[", "{", "\u2013", "\u2014"):
+        if sep in tail:
+            tail = tail.split(sep, 1)[0].strip()
+    return tail
+
+
+def extract_phase_label(value: object) -> str:
+    if value is None:
+        return "unknown"
+    text = str(value).strip().lower()
+    if not text:
+        return "unknown"
+    if "early" in text:
+        return "early_bird"
+    if "phase 0" in text or "phase0" in text:
+        return "phase_0"
+    if "phase 1" in text or "phase1" in text:
+        return "phase_1"
+    if "christmas" in text:
+        return "christmas"
+    if "ambassador" in text:
+        return "ambassador"
+    return "unknown"
+
+
+def extract_ticket_type_amount(value: object) -> float:
+    if value is None:
+        return np.nan
+    text = str(value)
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*€", text)
+    if not match:
+        return np.nan
+    raw = match.group(1).replace(",", ".")
+    try:
+        return float(raw)
+    except ValueError:
+        return np.nan
+
+
 def add_timeline_markers(ax: plt.Axes, markers: List[Dict[str, object]]) -> None:
     """Add vertical lines with labels to a time-based axis."""
     if not markers:
@@ -228,9 +278,13 @@ def analyze_geography(
 def export_summary_tables(
     df: pd.DataFrame,
     geo_country_cols: List[str],
+    geo_city_cols: List[str],
     ticket_type_col: Optional[str],
     ticket_total_num: Optional[str],
+    payment_gateway_col: Optional[str],
     output_dir: Path,
+    plots_dir: Path,
+    plot_format: str,
 ) -> None:
     """Esporta CSV di riepilogo."""
     exports: Dict[str, pd.DataFrame] = {}
@@ -254,11 +308,29 @@ def export_summary_tables(
             .to_frame("tickets")
             .sort_values("tickets", ascending=False)
         )
+    for idx, col in enumerate(geo_city_cols):
+        fname = "by_city.csv" if idx == 0 else f"by_city_{slugify(col)}.csv"
+        exports[fname] = (
+            df.groupby(col, dropna=False)
+            .size()
+            .to_frame("tickets")
+            .sort_values("tickets", ascending=False)
+        )
+    if payment_gateway_col and payment_gateway_col in df.columns:
+        exports["by_payment_gateway.csv"] = (
+            df.groupby(payment_gateway_col, dropna=False)
+            .agg(
+                tickets=(payment_gateway_col, "size"),
+                revenue=(ticket_total_num, "sum") if ticket_total_num in df.columns else (payment_gateway_col, "size"),
+            )
+            .sort_values(["revenue", "tickets"], ascending=False)
+        )
 
     for name, table in exports.items():
         out_path = output_dir / name
         table.to_csv(out_path, encoding="utf-8")
         print(f"Esportato: {out_path}")
+        save_table_image(table, plots_dir, f"table_{Path(name).stem}", plot_format)
 
 
 def normalize_and_prepare_columns(
@@ -308,6 +380,7 @@ def normalize_and_prepare_columns(
     ticket_type_col = ensure_existing(col_value("ticket_type", "Ticket Type"))
     ticket_total_col = ensure_existing(col_value("ticket_total", "Ticket Total"))
     order_total_col = ensure_existing(col_value("order_total", "Order Total"))
+    payment_gateway_col = ensure_existing(col_value("payment_gateway", "Payment Gateway"))
     discount_col = ensure_existing(col_value("discount_code", "Discount Code"))
     ticket_discount_col = ensure_existing(col_value("ticket_discount", "Ticket Discount"))
     country_col = ensure_existing(
@@ -324,6 +397,15 @@ def normalize_and_prepare_columns(
     buyer_email_col = ensure_existing(col_value("buyer_email", "Buyer E-Mail"))
     order_number_col = ensure_existing(col_value("order_number", "Order Number"))
     order_status_col = ensure_existing(col_value("order_status", "Order Status"))
+    payment_gateway_col = ensure_existing(col_value("payment_gateway", "Payment Gateway"))
+    ticket_id_col = ensure_existing(col_value("ticket_id", "Ticket ID"))
+    payment_gateway_col = ensure_existing(col_value("payment_gateway", "Payment Gateway"))
+    ticket_id_col = ensure_existing(col_value("ticket_id", "Ticket ID"))
+    payment_gateway_col = ensure_existing(col_value("payment_gateway", "Payment Gateway"))
+    ticket_id_col = ensure_existing(col_value("ticket_id", "Ticket ID"))
+    payment_gateway_col = ensure_existing(col_value("payment_gateway", "Payment Gateway"))
+    ticket_id_col = ensure_existing(col_value("ticket_id", "Ticket ID"))
+    ticket_id_col = ensure_existing(col_value("ticket_id", "Ticket ID"))
     dob_preferred = col_value("date_of_birth", "Date of birth / Data di nascita (Campi ticket holder)")
     dob_col = ensure_existing(
         dob_preferred,
@@ -365,6 +447,7 @@ def normalize_and_prepare_columns(
         "ticket_type_col": ticket_type_col,
         "ticket_total_col": ticket_total_col,
         "order_total_col": order_total_col,
+        "payment_gateway_col": payment_gateway_col,
         "discount_col": discount_col,
         "ticket_discount_col": ticket_discount_col,
         "country_col": country_col,
@@ -375,6 +458,7 @@ def normalize_and_prepare_columns(
         "buyer_email_col": buyer_email_col,
         "order_number_col": order_number_col,
         "order_status_col": order_status_col,
+        "ticket_id_col": ticket_id_col,
         "dob_col": dob_col,
         "numeric_map": numeric_map,
         "present_checkin_cols": present_checkin_cols,
@@ -483,6 +567,31 @@ def save_plot(fig: plt.Figure, destination: Path, name: str, fmt: str) -> None:
     out_path = destination / f"{name}.{fmt}"
     fig.savefig(out_path, bbox_inches="tight")
     print(f"Grafico salvato: {out_path}")
+    plt.close(fig)
+
+
+def save_table_image(df: pd.DataFrame, destination: Path, name: str, fmt: str) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    if df.empty:
+        return
+    shown = df.copy()
+    shown = shown.reset_index() if shown.index.name or shown.index.names else shown.reset_index(drop=False)
+    shown = shown.head(50)
+    fig, ax = plt.subplots(figsize=(10, max(2.5, 0.35 * len(shown))))
+    ax.axis("off")
+    table = ax.table(
+        cellText=shown.values,
+        colLabels=shown.columns,
+        loc="center",
+        cellLoc="left",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(1, 1.2)
+    out_path = destination / f"{name}.{fmt}"
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    print(f"Tabella salvata: {out_path}")
     plt.close(fig)
 
 
@@ -599,6 +708,8 @@ def main() -> None:
     buyer_email_col = ensure_existing(col_value("buyer_email", "Buyer E-Mail"))
     order_number_col = ensure_existing(col_value("order_number", "Order Number"))
     order_status_col = ensure_existing(col_value("order_status", "Order Status"))
+    payment_gateway_col = ensure_existing(col_value("payment_gateway", "Payment Gateway"))
+    ticket_id_col = ensure_existing(col_value("ticket_id", "Ticket ID"))
     dob_preferred = col_value("date_of_birth", "Date of birth / Data di nascita (Campi ticket holder)")
     dob_col = ensure_existing(
         dob_preferred,
@@ -743,6 +854,7 @@ def main() -> None:
         )
         print("\nVendite per tipo di ticket:")
         print(by_type.head(20))
+        save_table_image(by_type, plots_dir, "table_by_type", plot_format)
 
         if plots_enabled:
             type_counts = by_type["tickets"].sort_values(ascending=True)
@@ -754,6 +866,79 @@ def main() -> None:
             ax.set_ylabel("")
             fig.tight_layout()
             save_plot(fig, plots_dir, "ticket_type_counts", plot_format)
+
+    # === Ricavi per fase (da Ticket Type) ====================================
+    if ticket_type_col in df.columns:
+        df["phase_label"] = df[ticket_type_col].map(extract_phase_label)
+        df["ticket_type_amount_eur"] = df[ticket_type_col].map(extract_ticket_type_amount)
+        phase_table = (
+            df.groupby("phase_label", dropna=False)
+            .agg(
+                tickets=(ticket_type_col, "size"),
+                amount_eur=("ticket_type_amount_eur", "sum"),
+                amount_missing=("ticket_type_amount_eur", lambda s: s.isna().sum()),
+            )
+            .sort_values(["amount_eur", "tickets"], ascending=False)
+        )
+        total_row = pd.DataFrame(
+            {
+                "tickets": [phase_table["tickets"].sum()],
+                "amount_eur": [phase_table["amount_eur"].sum()],
+                "amount_missing": [phase_table["amount_missing"].sum()],
+            },
+            index=["TOTAL"],
+        )
+        phase_table = pd.concat([phase_table, total_row])
+        phase_path = output_dir / "phase_revenue_from_ticket_type.csv"
+        phase_table.to_csv(phase_path, encoding="utf-8")
+        print(f"\nRicavi per fase (da Ticket Type) salvati in: {phase_path}")
+        save_table_image(phase_table, plots_dir, "table_phase_revenue_from_ticket_type", plot_format)
+        if "TOTAL" in phase_table.index:
+            total_eur = phase_table.loc["TOTAL", "amount_eur"]
+            print(f"Totale incassato (da Ticket Type): {total_eur:,.2f}")
+
+    # === Ambassador summary ==================================================
+    if ticket_type_col in df.columns or ticket_id_col in df.columns:
+        amb_sources = [c for c in [ticket_type_col, ticket_id_col] if c and c in df.columns]
+        if amb_sources:
+            def find_ambassador(row: pd.Series) -> str:
+                for col in amb_sources:
+                    name = extract_ambassador_name(row.get(col))
+                    if name:
+                        return name
+                return ""
+
+            df["ambassador_name"] = df.apply(find_ambassador, axis=1)
+            ambassadors = df[df["ambassador_name"] != ""].copy()
+            if not ambassadors.empty:
+                amb_table = (
+                    ambassadors.groupby("ambassador_name", dropna=False)
+                    .agg(
+                        tickets=("ambassador_name", "size"),
+                        revenue=(ticket_total_num, "sum")
+                        if ticket_total_num in df.columns
+                        else ("ambassador_name", "size"),
+                    )
+                    .sort_values(["revenue", "tickets"], ascending=False)
+                )
+                amb_path = output_dir / "ambassador_sales.csv"
+                amb_table.to_csv(amb_path, encoding="utf-8")
+                print(f"\nReport ambassador salvato in: {amb_path}")
+                save_table_image(amb_table, plots_dir, "table_ambassador_sales", plot_format)
+
+    # === Payment Gateway =====================================================
+    if payment_gateway_col and payment_gateway_col in df.columns:
+        by_gateway = (
+            df.groupby(payment_gateway_col, dropna=False)
+            .agg(
+                tickets=(payment_gateway_col, "size"),
+                revenue=(ticket_total_num, "sum") if ticket_total_num in df.columns else (payment_gateway_col, "size"),
+            )
+            .sort_values(["revenue", "tickets"], ascending=False)
+        )
+        print("\nDistribuzione Payment Gateway:")
+        print(by_gateway.head(20))
+        save_table_image(by_gateway, plots_dir, "table_by_payment_gateway", plot_format)
 
     # Timeline vendite
     if PARSED_DATE_COL in df.columns:
@@ -929,7 +1114,17 @@ def main() -> None:
         print(missing_summary.round(1))
 
     # === Esportazioni ========================================================
-    export_summary_tables(df, geo_country_cols, ticket_type_col, ticket_total_num, output_dir)
+    export_summary_tables(
+        df,
+        geo_country_cols,
+        geo_city_cols,
+        ticket_type_col,
+        ticket_total_num,
+        payment_gateway_col,
+        output_dir,
+        plots_dir,
+        plot_format,
+    )
 
     print("\nAnalisi completata.")
 
