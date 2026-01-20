@@ -388,24 +388,103 @@ def export_summary_tables(
     """Esporta CSV di riepilogo."""
     exports: Dict[str, pd.DataFrame] = {}
     if ticket_type_col in df.columns:
+        unit_price_col = "_ticket_type_amount_eur"
+        df[unit_price_col] = df[ticket_type_col].map(extract_ticket_type_amount)
+
+        def normalize_label(label: str) -> str:
+            normalized = label.lower()
+            normalized = normalized.replace("\u2013", "-").replace("\u2014", "-")
+            normalized = " ".join(normalized.split())
+            return normalized
+
+        def bundle_size_from_label(label: str) -> Optional[int]:
+            match = re.search(
+                r"christmas bundle\s*-\s*(\d+)\s+full festival pass",
+                normalize_label(label),
+            )
+            if match:
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    return None
+            return None
+
+        def adjust_unit_price(label: str, price: float) -> float:
+            normalized = normalize_label(label or "")
+            if "caravan pass" in normalized and "base" in normalized:
+                return 25.0
+            size = bundle_size_from_label(label or "")
+            if size and price:
+                return price / size
+            return price
+
         by_type = (
             df.groupby(ticket_type_col, dropna=False)
             .agg(
                 tickets=(ticket_type_col, "size"),
                 revenue=(ticket_total_num, "sum") if ticket_total_num in df.columns else (ticket_type_col, "size"),
+                unit_price_eur=(
+                    unit_price_col,
+                    lambda s: s.dropna().iloc[0] if not s.dropna().empty else np.nan,
+                ),
             )
             .sort_values(["tickets"], ascending=False)
         )
+        by_type["unit_price_eur"] = [
+            adjust_unit_price(str(label), price)
+            if not pd.isna(price)
+            else adjust_unit_price(str(label), np.nan)
+            for label, price in zip(by_type.index, by_type["unit_price_eur"])
+        ]
+        by_type["expected_amount_eur"] = by_type["tickets"] * by_type["unit_price_eur"]
+        by_type["diff_amount_eur"] = by_type["revenue"] - by_type["expected_amount_eur"]
+        by_type["total_ass_eur"] = [
+            0.0 if "caravan pass" in normalize_label(str(label)) else tickets * 25.0
+            for label, tickets in zip(by_type.index, by_type["tickets"])
+        ]
+        by_type["total_festival_eur"] = by_type["revenue"] - by_type["total_ass_eur"]
         total_row = pd.DataFrame(
             {
                 "tickets": [by_type["tickets"].sum()],
                 "revenue": [by_type["revenue"].sum()],
+                "unit_price_eur": [np.nan],
+                "expected_amount_eur": [by_type["expected_amount_eur"].sum()],
+                "diff_amount_eur": [by_type["diff_amount_eur"].sum()],
+                "total_ass_eur": [by_type["total_ass_eur"].sum()],
+                "total_festival_eur": [by_type["total_festival_eur"].sum()],
             },
             index=["TOTAL"],
         )
         by_type = pd.concat([by_type, total_row])
-        by_type = by_type.rename(columns={"revenue": "Total Amount (€)"})
-        by_type["Total Amount (€)"] = by_type["Total Amount (€)"].map(format_eur)
+        by_type = by_type.rename(
+            columns={
+                "revenue": "Total Amount (€)",
+                "unit_price_eur": "Unit Price (€)",
+                "expected_amount_eur": "Expected Amount (€)",
+                "diff_amount_eur": "Diff (€)",
+                "total_ass_eur": "Total Ass (€)",
+                "total_festival_eur": "Total Festival (€)",
+            }
+        )
+        ordered_cols = [
+            "tickets",
+            "Unit Price (€)",
+            "Total Ass (€)",
+            "Total Festival (€)",
+            "Total Amount (€)",
+            "Expected Amount (€)",
+            "Diff (€)",
+        ]
+        by_type = by_type[[c for c in ordered_cols if c in by_type.columns]]
+        for col in [
+            "Total Amount (€)",
+            "Unit Price (€)",
+            "Expected Amount (€)",
+            "Diff (€)",
+            "Total Ass (€)",
+            "Total Festival (€)",
+        ]:
+            by_type[col] = by_type[col].map(format_eur)
         exports["by_type.csv"] = by_type
     for idx, col in enumerate(geo_country_cols):
         fname = "by_country.csv" if idx == 0 else f"by_country_{slugify(col)}.csv"
@@ -726,14 +805,15 @@ def save_table_image(
     shown = shown.head(50)
     if shown.columns[0] == "index":
         shown = shown.rename(columns={"index": ""})
-    fig, ax = plt.subplots(figsize=(10, max(2.5, 0.35 * len(shown))))
+    width = 12.5 + max(0, len(shown.columns) - 3) * 1.6
+    fig, ax = plt.subplots(figsize=(width, max(2.5, 0.35 * len(shown))))
     ax.axis("off")
     col_widths = None
     if widen_first_col and len(shown.columns) > 1:
         if narrow_numeric_cols and len(shown.columns) == 3:
             col_widths = [0.7, 0.15, 0.15]
         else:
-            first = 0.6
+            first = 0.42
             rest = (1.0 - first) / (len(shown.columns) - 1)
             col_widths = [first] + [rest] * (len(shown.columns) - 1)
     table = ax.table(
