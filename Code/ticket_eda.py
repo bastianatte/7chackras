@@ -531,11 +531,37 @@ def export_summary_tables(
         highlight = None
         narrow_numeric = False
         font_size = 8
+        col_widths_override = None
+        fig_width_override = None
+        fig_height_override = None
+        scale_x_override = None
+        scale_y_override = None
+        bbox_override = None
+        manual_table = False
+        header_font_size = None
+        header_labels_override = None
+        row_height_override = None
+        header_height_override = None
         if name == "by_type.csv":
             widen_first = True
             highlight = "TOTAL"
             narrow_numeric = True
             font_size = 11
+        if name == "ambassador_sales.csv":
+            highlight = "TOTAL"
+            narrow_numeric = True
+            font_size = 14
+            col_widths_override = [0.73, 0.11, 0.16]
+            fig_width_override = 6.0
+            fig_height_override = max(6.0, 0.7 * len(table))
+            scale_x_override = None
+            scale_y_override = None
+            bbox_override = None
+            header_font_size = 12
+            header_labels_override = ["", "tickets", "Total €"]
+            row_height_override = 1.5
+            header_height_override = 1.8
+            manual_table = True
         if name == "by_payment_gateway.csv":
             highlight = "TOTAL"
         save_table_image(
@@ -546,7 +572,18 @@ def export_summary_tables(
             highlight_value=highlight,
             widen_first_col=widen_first,
             narrow_numeric_cols=narrow_numeric,
+            col_widths_override=col_widths_override,
             font_size=font_size,
+            fig_width_override=fig_width_override,
+            fig_height_override=fig_height_override,
+            scale_x_override=scale_x_override,
+            scale_y_override=scale_y_override,
+            bbox_override=bbox_override,
+            manual_table=manual_table,
+            header_font_size=header_font_size,
+            header_labels_override=header_labels_override,
+            row_height_override=row_height_override,
+            header_height_override=header_height_override,
         )
 
 
@@ -795,6 +832,17 @@ def save_table_image(
     highlight_value: str | None = None,
     widen_first_col: bool = False,
     narrow_numeric_cols: bool = False,
+    col_widths_override: Optional[List[float]] = None,
+    fig_width_override: Optional[float] = None,
+    fig_height_override: Optional[float] = None,
+    scale_x_override: Optional[float] = None,
+    scale_y_override: Optional[float] = None,
+    bbox_override: Optional[List[float]] = None,
+    manual_table: bool = False,
+    header_font_size: Optional[int] = None,
+    header_labels_override: Optional[List[str]] = None,
+    row_height_override: Optional[float] = None,
+    header_height_override: Optional[float] = None,
     font_size: int = 8,
 ) -> None:
     destination.mkdir(parents=True, exist_ok=True)
@@ -806,9 +854,65 @@ def save_table_image(
     if shown.columns[0] == "index":
         shown = shown.rename(columns={"index": ""})
     width = 12.5 + max(0, len(shown.columns) - 3) * 1.6
-    fig, ax = plt.subplots(figsize=(width, max(2.5, 0.35 * len(shown))))
+    if fig_width_override:
+        width = fig_width_override
+    height = fig_height_override if fig_height_override is not None else max(2.5, 0.35 * len(shown))
+    fig, ax = plt.subplots(figsize=(width, height))
     ax.axis("off")
+    if manual_table:
+        col_widths = col_widths_override or [1.0 / len(shown.columns)] * len(shown.columns)
+        total_width = sum(col_widths)
+        body_rows = len(shown)
+        row_height = row_height_override if row_height_override is not None else 1.2
+        header_height = header_height_override if header_height_override is not None else row_height
+        total_height = (body_rows * row_height) + header_height
+        ax.set_xlim(0, total_width)
+        ax.set_ylim(0, total_height)
+        ax.axis("off")
+        x_positions = [0.0]
+        for width in col_widths:
+            x_positions.append(x_positions[-1] + width)
+        # Body horizontal lines
+        for r in range(body_rows + 1):
+            y = r * row_height
+            ax.hlines(y, 0, total_width, color="black", linewidth=1)
+        # Header separator + top line
+        ax.hlines(body_rows * row_height, 0, total_width, color="black", linewidth=1)
+        ax.hlines(total_height, 0, total_width, color="black", linewidth=1)
+        for x in x_positions:
+            ax.vlines(x, 0, total_height, color="black", linewidth=1)
+        header_size = header_font_size if header_font_size is not None else max(10, int(font_size * 0.9))
+        header_labels = header_labels_override or [str(c) for c in shown.columns]
+        for col_idx, label in enumerate(header_labels):
+            x_center = (x_positions[col_idx] + x_positions[col_idx + 1]) / 2
+            ax.text(
+                x_center,
+                total_height - (header_height / 2),
+                str(label),
+                ha="center" if col_idx else "left",
+                va="center",
+                fontsize=header_size,
+            )
+        for row_idx, row in enumerate(shown.values, start=1):
+            y = (body_rows - row_idx) * row_height + (row_height / 2)
+            for col_idx, value in enumerate(row):
+                if col_idx == 0:
+                    x = x_positions[0] + (total_width * 0.01)
+                    ha = "left"
+                else:
+                    x = (x_positions[col_idx] + x_positions[col_idx + 1]) / 2
+                    ha = "center"
+                weight = "bold" if highlight_value and str(row[0]).strip().lower() == highlight_value.lower() else "normal"
+                ax.text(x, y, str(value), ha=ha, va="center", fontsize=font_size, weight=weight)
+        out_path = destination / f"{name}.{fmt}"
+        fig.tight_layout()
+        fig.savefig(out_path, bbox_inches="tight")
+        print(f"Tabella salvata: {out_path}")
+        plt.close(fig)
+        return
     col_widths = None
+    if col_widths_override:
+        col_widths = col_widths_override
     if widen_first_col and len(shown.columns) > 1:
         if narrow_numeric_cols and len(shown.columns) == 3:
             col_widths = [0.7, 0.15, 0.15]
@@ -816,23 +920,41 @@ def save_table_image(
             first = 0.42
             rest = (1.0 - first) / (len(shown.columns) - 1)
             col_widths = [first] + [rest] * (len(shown.columns) - 1)
-    table = ax.table(
+    table_kwargs = dict(
         cellText=shown.values,
         colLabels=shown.columns,
         loc="center",
-        cellLoc="left",
+        cellLoc="center",
         colWidths=col_widths,
     )
+    if bbox_override:
+        table_kwargs["bbox"] = bbox_override
+    elif col_widths_override:
+        table_kwargs["bbox"] = [0, 0, 1, 1]
+    table = ax.table(**table_kwargs)
     table.auto_set_font_size(False)
     table.set_fontsize(font_size)
-    table.scale(1, 1.2)
+    scale_x = scale_x_override if scale_x_override is not None else 1
+    scale_y = scale_y_override if scale_y_override is not None else 1.2
+    table.scale(scale_x, scale_y)
+    if col_widths_override:
+        for col_idx, width in enumerate(col_widths_override):
+            for row_idx in range(0, len(shown) + 1):
+                table[(row_idx, col_idx)].set_width(width)
     if narrow_numeric_cols:
         for col_idx in range(1, len(shown.columns)):
             table[(0, col_idx)]._loc = "center"
-            table[(0, col_idx)].set_text_props(ha="center")
+            table[(0, col_idx)].set_text_props(ha="center", va="center")
+            table[(0, col_idx)].PAD = 0.02
             for row_idx in range(1, len(shown) + 1):
                 table[(row_idx, col_idx)]._loc = "center"
-                table[(row_idx, col_idx)].set_text_props(ha="center")
+                table[(row_idx, col_idx)].set_text_props(ha="center", va="center")
+                table[(row_idx, col_idx)].PAD = 0.02
+    # Keep the first column left-aligned (labels).
+    for row_idx in range(0, len(shown) + 1):
+        table[(row_idx, 0)]._loc = "left"
+        table[(row_idx, 0)].set_text_props(ha="left", va="center")
+        table[(row_idx, 0)].PAD = 0.04
     if highlight_value:
         for row_idx, row in enumerate(shown.values, start=1):
             if str(row[0]).strip().lower() == highlight_value.lower():
@@ -1204,6 +1326,15 @@ def main() -> None:
                     "table_ambassador_sales",
                     plot_format,
                     highlight_value="TOTAL",
+                    manual_table=True,
+                    col_widths_override=[0.73, 0.11, 0.16],
+                    font_size=14,
+                    fig_width_override=6.0,
+                    fig_height_override=max(6.0, 0.7 * len(amb_table)),
+                    header_font_size=12,
+                    header_labels_override=["", "tickets", "Total €"],
+                    row_height_override=1.5,
+                    header_height_override=1.8,
                 )
 
     # === Payment Gateway =====================================================
