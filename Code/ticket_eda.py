@@ -749,8 +749,10 @@ def save_table_image(
     if narrow_numeric_cols:
         for col_idx in range(1, len(shown.columns)):
             table[(0, col_idx)]._loc = "center"
+            table[(0, col_idx)].set_text_props(ha="center")
             for row_idx in range(1, len(shown) + 1):
                 table[(row_idx, col_idx)]._loc = "center"
+                table[(row_idx, col_idx)].set_text_props(ha="center")
     if highlight_value:
         for row_idx, row in enumerate(shown.values, start=1):
             if str(row[0]).strip().lower() == highlight_value.lower():
