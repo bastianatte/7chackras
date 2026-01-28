@@ -1248,6 +1248,10 @@ def main() -> None:
             ax.set_title("Conteggio biglietti per tipo")
             ax.set_xlabel("Biglietti")
             ax.set_ylabel("")
+            max_count = int(type_counts.max()) if not type_counts.empty else 0
+            if max_count:
+                ax.set_xlim(0, max_count * 1.15)
+                ax.bar_label(ax.containers[0], padding=3, fmt="%.0f")
             fig.tight_layout()
             save_plot(fig, plots_dir, "ticket_type_counts", plot_format)
 
