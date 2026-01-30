@@ -84,7 +84,7 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--input",
-        "${workspaceFolder}/Documenti/Tickets/Attendee_List_Paid_19Gen_16.18pm.csv"
+        "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2025_onlyGood.csv"
       ]
     },
     {
@@ -96,7 +96,23 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--input",
-        "${workspaceFolder}/Documenti/Tickets/Attendee_List_Any-GianlucaIarlori.csv"
+        "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2019.csv"
+      ]
+    },
+    {
+      "name": "Ticket Sales Distributions",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Code/ticket_sales_distribution_plots.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--inputs",
+        "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2019_onlyGood_VERIFIED_FLAT.csv",
+        "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2025_onlyGood_VERIFIED_FLAT.csv",
+        "${workspaceFolder}/Documenti/Tickets/Attendee_List_Paid_19Gen_16.18pm_FLAT.csv",
+        "--output-dir",
+        "${workspaceFolder}/output/vendite_distribuzione"
       ]
     }
   ]

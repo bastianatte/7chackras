@@ -17,6 +17,7 @@ Il progetto si divide in tre aree principali:
 ### Core Scripts
 
 - **[`ticket_eda.py`](file:///c:/Users/spina/Documents/Other_Codes/7chackras/Code/ticket_eda.py):** Analizza i ticket "Paid", calcola entrate per tipo/paese e genera grafici.
+- **[`ticket_sales_distribution_plots.py`](file:///c:/Users/spina/Documents/Other_Codes/7chackras/Code/ticket_sales_distribution_plots.py):** Genera grafici di vendite giornaliere e cumulative dai CSV con colonna `Payment Date`.
 - **[`members_ticket_match.py`](file:///c:/Users/spina/Documents/Other_Codes/7chackras/Code/members_ticket_match.py):** Esegue il matching tra liste soci e attendee, categorizzando i risultati (match sicuri, nomi simili, scarti).
 - **[`ticket_phase_summary.py`](file:///c:/Users/spina/Documents/Other_Codes/7chackras/Code/ticket_phase_summary.py):** Genera un riepilogo delle vendite suddiviso per fasi (Early Bird, Phase 0, Phase 1, ecc.).
 
