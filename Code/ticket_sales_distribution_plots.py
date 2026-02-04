@@ -16,6 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.dates import DateFormatter, MonthLocator
+from matplotlib.ticker import FuncFormatter, MultipleLocator
 
 READ_KWARGS = {
     "sep": ",",
@@ -25,6 +26,40 @@ READ_KWARGS = {
     "dtype": str,
     "skip_blank_lines": True,
 }
+
+
+EVENT_END_DATES: Dict[str, pd.Timestamp] = {
+    "Lista_ticket_7chakras_2019_onlyGood_VERIFIED_FLAT": pd.Timestamp("2019-08-28"),
+    "Lista_ticket_7chakras_2025_onlyGood_VERIFIED_FLAT": pd.Timestamp("2025-06-23"),
+    "Attendee_List_Paid_19Gen_16.18pm_FLAT": pd.Timestamp("2026-07-13"),
+}
+
+
+def resolve_event_target(stem: str) -> Tuple[Optional[str], Optional[pd.Timestamp]]:
+    exact = EVENT_END_DATES.get(stem)
+    if exact is not None:
+        return stem, exact
+    lower = stem.lower()
+    for key in EVENT_END_DATES:
+        if key.lower() == lower:
+            return key, EVENT_END_DATES[key]
+    for key in EVENT_END_DATES:
+        key_lower = key.lower()
+        if key_lower in lower or lower in key_lower:
+            return key, EVENT_END_DATES[key]
+    print(
+        "[WARN] Nessuna EVENT_END_DATE trovata per "
+        f"'{stem}'. Disponibili: {list(EVENT_END_DATES.keys())}. "
+        "Aggiungi la chiave corretta se manca."
+    )
+    lower = stem.lower()
+    if "2019" in lower:
+        return "__year_2019__", EVENT_END_DATES["Lista_ticket_7chakras_2019_onlyGood_VERIFIED_FLAT"]
+    if "2025" in lower:
+        return "__year_2025__", EVENT_END_DATES["Lista_ticket_7chakras_2025_onlyGood_VERIFIED_FLAT"]
+    if "2026" in lower:
+        return "__year_2026__", EVENT_END_DATES["Attendee_List_Paid_19Gen_16.18pm_FLAT"]
+    return None, None
 
 
 def normalize_columns(columns: Iterable[str]) -> List[str]:
@@ -176,6 +211,19 @@ def trim_to_span(
     return trimmed
 
 
+def reorder_wrap_series(
+    series: pd.Series,
+    first_date: pd.Timestamp,
+    last_date: pd.Timestamp,
+) -> pd.Series:
+    if first_date <= last_date:
+        return series.loc[first_date:last_date]
+    part1 = series.loc[first_date:]
+    part2 = series.loc[:last_date]
+    return pd.concat([part1, part2])
+
+
+
 def plot_combined_daily(series_map: Dict[str, pd.Series], out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(12, 5))
     first_series: Optional[pd.Series] = None
@@ -308,6 +356,114 @@ def plot_combined_cumulative_aligned_end(
     plt.close(fig)
 
 
+def plot_combined_daily_aligned_end(
+    series_map: Dict[str, pd.Series],
+    out_path: Path,
+) -> None:
+    fig, ax = plt.subplots(figsize=(12, 5))
+    for label, daily in series_map.items():
+        valid = daily.dropna()
+        if valid.empty:
+            continue
+        x_vals = list(range(-len(valid) + 1, 1))
+        ax.plot(
+            x_vals,
+            valid.values,
+            marker="o",
+            markersize=3,
+            linewidth=1.3,
+            label=label,
+        )
+    ax.set_title("Vendite giornaliere - allineate all'ultima entry")
+    ax.set_xlabel("Giorni prima dell'ultima entry")
+    ax.set_ylabel("Vendite giornaliere")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_daily_aligned_event(
+    series_map: Dict[str, Tuple[pd.Series, pd.Timestamp]],
+    out_path: Path,
+) -> None:
+    fig, ax = plt.subplots(figsize=(12, 5))
+    min_x = 0
+    for label, payload in series_map.items():
+        series, target_end = payload
+        if series.empty or target_end is None:
+            continue
+        valid = series[series.index <= target_end]
+        if valid.empty:
+            continue
+        delta_days = (target_end.normalize() - valid.index.normalize()).days
+        x_vals = -delta_days
+        min_x = min(min_x, int(x_vals.min()))
+        ax.plot(
+            x_vals,
+            valid.values,
+            marker="o",
+            markersize=3,
+            linewidth=1.3,
+            label=f"{label} ({target_end.strftime('%d/%m/%Y')})",
+        )
+    ax.set_title("Vendite giornaliere - allineate all'evento")
+    ax.set_xlabel("Giorni prima dell'evento")
+    ax.set_ylabel("Vendite giornaliere")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=9)
+    if min_x == 0:
+        min_x = -1
+    if min_x == 0:
+        min_x = -1
+    ax.set_xlim(min_x, 0)
+    ax.xaxis.set_major_locator(MultipleLocator(30))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x)}"))
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_cumulative_aligned_event(
+    series_map: Dict[str, Tuple[pd.Series, pd.Timestamp]],
+    out_path: Path,
+) -> None:
+    fig, ax = plt.subplots(figsize=(12, 5))
+    min_x = 0
+    for label, payload in series_map.items():
+        series, target_end = payload
+        if series.empty or target_end is None:
+            continue
+        valid = series[series.index <= target_end]
+        if valid.empty:
+            continue
+        delta_days = (target_end.normalize() - valid.index.normalize()).days
+        x_vals = -delta_days
+        min_x = min(min_x, int(x_vals.min()))
+        ax.plot(
+            x_vals,
+            valid.values,
+            marker="o",
+            markersize=3,
+            linewidth=1.3,
+            label=f"{label} ({target_end.strftime('%d/%m/%Y')})",
+        )
+    ax.set_title("Vendite cumulative - allineate all'evento")
+    ax.set_xlabel("Giorni prima dell'evento")
+    ax.set_ylabel("Vendite cumulative")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=9)
+    if min_x == 0:
+        min_x = -1
+    ax.set_xlim(min_x, 0)
+    ax.xaxis.set_major_locator(MultipleLocator(30))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x)}"))
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
 def process_file(
     path: Path,
     output_dir: Path,
@@ -315,7 +471,7 @@ def process_file(
     fmt: str,
     season_start_month: int,
     season_months: int,
-) -> Optional[Tuple[pd.Series, pd.Timestamp]]:
+) -> Optional[Tuple[pd.Series, pd.Timestamp, pd.Timestamp, Optional[Tuple[pd.Series, pd.Timestamp]]]]:
     if not path.exists():
         print(f"[SKIP] File non trovato: {path}")
         return None
@@ -349,7 +505,10 @@ def process_file(
     )
     first_date = map_date_to_season(first_real_date, season_start_month, first_real_date)
     last_date = map_date_to_season(last_real_date, season_start_month, first_real_date)
-    return normalized, first_date, last_date
+    match_key, target_end = resolve_event_target(path.stem)
+    print(f"[DEBUG] stem={path.stem} event_target={target_end}")
+    event_payload = (daily, target_end) if target_end is not None else None
+    return normalized, first_date, last_date, event_payload
 
 
 def parse_args() -> argparse.Namespace:
@@ -401,8 +560,10 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     season_series: Dict[str, pd.Series] = {}
+    event_series: Dict[str, Tuple[pd.Series, pd.Timestamp]] = {}
     for input_path in args.inputs:
         path = Path(input_path)
+        print(f"[DEBUG] input={path.name} stem={path.stem}")
         result = process_file(
             path,
             output_dir,
@@ -412,14 +573,22 @@ def main() -> None:
             args.season_months,
         )
         if result is not None:
-            normalized, first_date, last_date = result
+            normalized, first_date, last_date, event_payload = result
             if not normalized.empty:
-                season_series[path.stem] = trim_to_span(
+                trimmed = trim_to_span(
                     normalized,
                     first_date,
                     last_date,
                 )
+                season_series[path.stem] = reorder_wrap_series(
+                    trimmed,
+                    first_date,
+                    last_date,
+                )
+        if event_payload is not None and not event_payload[0].empty:
+            event_series[path.stem] = event_payload
 
+    event_cum_series: Dict[str, Tuple[pd.Series, pd.Timestamp]] = {}
     if season_series:
         combined_daily = output_dir / f"vendite_giornaliere_comparativa.{args.format}"
         combined_cumulative = output_dir / f"vendite_cumulative_comparativa.{args.format}"
@@ -429,15 +598,33 @@ def main() -> None:
         combined_cumulative_aligned = (
             output_dir / f"vendite_cumulative_comparativa_allineata.{args.format}"
         )
+        combined_daily_aligned = (
+            output_dir / f"vendite_giornaliere_comparativa_allineata.{args.format}"
+        )
         plot_combined_daily(season_series, combined_daily)
         plot_combined_cumulative(season_series, combined_cumulative)
         plot_combined_cumulative_normalized(season_series, combined_cumulative_norm)
         plot_combined_cumulative_aligned_end(season_series, combined_cumulative_aligned)
-        print(
-            "[OK] Salvati: "
-            f"{combined_daily.name}, {combined_cumulative.name}, "
-            f"{combined_cumulative_norm.name}, {combined_cumulative_aligned.name}"
-        )
+        plot_combined_daily_aligned_end(season_series, combined_daily_aligned)
+        saved_names = [
+            combined_daily.name,
+            combined_cumulative.name,
+            combined_cumulative_norm.name,
+            combined_cumulative_aligned.name,
+            combined_daily_aligned.name,
+        ]
+        print(f"[DEBUG] event_series keys = {list(event_series.keys())}")
+        if event_series:
+            combined_daily_event = output_dir / f"vendite_giornaliere_comparativa_event.{args.format}"
+            plot_daily_aligned_event(event_series, combined_daily_event)
+            saved_names.append(combined_daily_event.name)
+            for label, payload in event_series.items():
+                cum_series = payload[0].sort_index().cumsum()
+                event_cum_series[label] = (cum_series, payload[1])
+            combined_cum_event = output_dir / f"vendite_cumulative_comparativa_event.{args.format}"
+            plot_cumulative_aligned_event(event_cum_series, combined_cum_event)
+            saved_names.append(combined_cum_event.name)
+        print(f"[OK] Salvati: {', '.join(saved_names)}")
 
 
 if __name__ == "__main__":

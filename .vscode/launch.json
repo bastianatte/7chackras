@@ -84,8 +84,8 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--input",
-        "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2025_onlyGood.csv"
-      ]
+        // "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2025_onlyGood.csv"
+        "${workspaceFolder}/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_definitivo.csv" ]
     },
     {
       "name": "CSV Flatten (generic)",
@@ -96,7 +96,7 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--input",
-        "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2019.csv"
+        "${workspaceFolder}/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_definitivo.csv"
       ]
     },
     {
@@ -108,11 +108,11 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--inputs",
-        "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2019_onlyGood_VERIFIED_FLAT.csv",
-        "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2025_onlyGood_VERIFIED_FLAT.csv",
-        "${workspaceFolder}/Documenti/Tickets/Attendee_List_Paid_19Gen_16.18pm_FLAT.csv",
+        "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2019_onlyGood/Lista_ticket_7chakras_2019_onlyGood_VERIFIED_FLAT.csv",
+        "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2025_onlyGood/Lista_ticket_7chakras_2025_onlyGood_VERIFIED_FLAT.csv",
+        "${workspaceFolder}/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_2026_definitivo_FLAT.csv",
         "--output-dir",
-        "${workspaceFolder}/output/vendite_distribuzione"
+        "${workspaceFolder}/Documenti/Reports/vendite_distribuzione_finePhase1"
       ]
     }
   ]

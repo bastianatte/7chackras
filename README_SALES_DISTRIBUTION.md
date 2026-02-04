@@ -35,6 +35,8 @@ Grafici comparativi (tutti i CSV sovrapposti, allineati per mese):
 - `vendite_cumulative_comparativa.png`
 - `vendite_cumulative_comparativa_norm.png` (normalizzato al 100% finale)
 - `vendite_cumulative_comparativa_allineata.png` (ultima entry allineata)
+- `vendite_giornaliere_comparativa_allineata.png` (giornaliere allineate all'ultima entry)
+- `vendite_giornaliere_comparativa_event.png` (vendite giornaliere allineate al giorno del festival per ciascun anno)
 
 ## Esecuzione
 
@@ -61,6 +63,10 @@ Per allargare la finestra stagionale (default: 13 mesi):
 ```bash
 python Code/ticket_sales_distribution_plots.py --season-months 15
 ```
+
+## Grafico giornaliero allineato all’evento
+
+Basta eseguire lo script: il file `vendite_giornaliere_comparativa_event.png` mostra le vendite giornaliere per ciascun CSV dopo aver spostato la loro ultima entry sul giorno dell’evento (2019→28/08, 2025→23/06, 2026→14/07). Questo permette di confrontare gli step di vendita con il “countdown” fino al festival, anche se le date reali cadono in mesi diversi.
 
 ## Launch VS Code
 

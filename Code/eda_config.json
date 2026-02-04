@@ -1,6 +1,6 @@
 {
-  "csv_path": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/Attendee_List_Paid_VERIFIED_FLAT__19Gen_16.18pm.csv",
-  "output_dir": "C:/Users/spina/Documents/Other_Codes/7chackras/output/Attendee_List_Paid_VERIFIED_FLAT__19Gen_16.18pm_LAST",
+  "csv_path": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_definitivo_FLAT.csv",
+  "output_dir": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_definitivo_FLAT",
   "plots": {
     "enabled": true,
     "format": "png"
@@ -30,6 +30,11 @@
       "date": "2025-08-24",
       "label": "phase 1",
       "color": "#fbc02d"
+    },
+    {
+      "date": "2026-02-01",
+      "label": "phase 2",
+      "color": "#ff6f00"
     }
   ],
   "columns": {
