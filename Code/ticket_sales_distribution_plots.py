@@ -5,18 +5,17 @@ Genera grafici di vendite giornaliere e cumulative a partire da CSV Tickera.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.dates import DateFormatter, MonthLocator
-from matplotlib.ticker import FuncFormatter, MultipleLocator
 import re
 
 READ_KWARGS = {
@@ -34,6 +33,30 @@ EVENT_END_DATES: Dict[str, pd.Timestamp] = {
     "Lista_ticket_7chakras_2025_onlyGood_VERIFIED_FLAT": pd.Timestamp("2025-06-23"),
     "Attendee_List_Paid_19Gen_16.18pm_FLAT": pd.Timestamp("2026-07-13"),
 }
+
+REFERENCE_EVENT_DATE = max(EVENT_END_DATES.values())
+
+
+def format_month_label(days: int) -> str:
+    if days == 0:
+        return "Event"
+    months = days / 30
+    if abs(months - round(months)) < 1e-9:
+        months_int = int(round(months))
+        return f"{months_int} month" if months_int == 1 else f"{months_int} months"
+    if abs(months - 0.5) < 1e-9:
+        return "1/2mont"
+    return f"{months:.1f}mont"
+
+
+def build_event_ticks(max_days: int) -> Tuple[np.ndarray, List[str]]:
+    step = 15
+    ticks = np.arange(0, max_days + step, step)
+    labels = [format_month_label(int(day)) for day in ticks]
+    return ticks, labels
+
+
+LEGEND_FONTSIZE = 12
 
 
 def resolve_event_target(stem: str) -> Tuple[Optional[str], Optional[pd.Timestamp]]:
@@ -66,6 +89,11 @@ def resolve_event_target(stem: str) -> Tuple[Optional[str], Optional[pd.Timestam
 def infer_year_from_stem(stem: str) -> str:
     match = re.search(r"(20\d{2})", stem)
     return match.group(1) if match else "unknown"
+
+
+def legend_label_from_stem(stem: str) -> str:
+    year = infer_year_from_stem(stem)
+    return f"7 Chakras Festival {year}"
 
 
 def save_daily_csv(daily: pd.Series, year: str, output_dir: Path) -> None:
@@ -152,11 +180,13 @@ def build_daily_counts(df: pd.DataFrame, date_col: str) -> pd.Series:
 
 def plot_daily_sales(daily: pd.Series, label: str, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(daily.index, daily.values, marker="o", color="#1e88e5")
-    ax.set_title(f"Vendite giornaliere - {label}")
-    ax.set_xlabel("Data")
-    ax.set_ylabel("Biglietti")
+    legend_name = legend_label_from_stem(label)
+    ax.plot(daily.index, daily.values, marker="o", color="#1e88e5", label=legend_name)
+    ax.set_title(f"Daily Sales - {legend_name}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Tickets")
     ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=LEGEND_FONTSIZE)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -165,11 +195,13 @@ def plot_daily_sales(daily: pd.Series, label: str, out_path: Path) -> None:
 def plot_cumulative_sales(daily: pd.Series, label: str, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(10, 4))
     cumulative = daily.cumsum()
-    ax.plot(cumulative.index, cumulative.values, marker="o", color="#d81b60")
-    ax.set_title(f"Vendite cumulative - {label}")
-    ax.set_xlabel("Data")
-    ax.set_ylabel("Cumulato")
+    legend_name = legend_label_from_stem(label)
+    ax.plot(cumulative.index, cumulative.values, marker="o", color="#d81b60", label=legend_name)
+    ax.set_title(f"Cumulative Sales - {legend_name}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Cumulative Tickets")
     ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=LEGEND_FONTSIZE)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -247,7 +279,8 @@ def plot_daily_aligned_event(
     out_path: Path,
 ) -> None:
     fig, ax = plt.subplots(figsize=(12, 5))
-    min_x = 0
+    min_x = float("inf")
+    max_x = 0
     for label, payload in series_map.items():
         series, target_end = payload
         if series.empty or target_end is None:
@@ -256,28 +289,28 @@ def plot_daily_aligned_event(
         if valid.empty:
             continue
         delta_days = (target_end.normalize() - valid.index.normalize()).days
-        x_vals = -delta_days
+        x_vals = delta_days
         min_x = min(min_x, int(x_vals.min()))
+        max_x = max(max_x, int(x_vals.max()))
         ax.plot(
             x_vals,
             valid.values,
             marker="o",
             markersize=3,
             linewidth=1.3,
-            label=f"{label} ({target_end.strftime('%d/%m/%Y')})",
+            label=f"{legend_label_from_stem(label)} ({target_end.strftime('%d/%m/%Y')})",
         )
-    ax.set_title("Vendite giornaliere - allineate all'evento")
-    ax.set_xlabel("Giorni prima dell'evento")
-    ax.set_ylabel("Vendite giornaliere")
+    ax.set_title("Daily sales - aligned to the event")
+    ax.set_xlabel("Months before the 7 Chakras")
+    ax.set_ylabel("Daily Tickets")
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=9)
-    if min_x == 0:
-        min_x = -1
-    if min_x == 0:
-        min_x = -1
-    ax.set_xlim(min_x, 0)
-    ax.xaxis.set_major_locator(MultipleLocator(30))
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x)}"))
+    ax.legend(fontsize=LEGEND_FONTSIZE)
+    if min_x == float("inf"):
+        min_x = 0
+    ticks, labels = build_event_ticks(max_x)
+    ax.set_xlim(min_x, max_x)
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -289,7 +322,8 @@ def plot_daily_event_histogram(
 ) -> None:
     fig, ax = plt.subplots(figsize=(12, 5))
     cmap = plt.get_cmap("tab10")
-    min_x = 0
+    min_x = float("inf")
+    max_x = 0
     for idx, (label, payload) in enumerate(series_map.items()):
         series, target_end = payload
         if series.empty or target_end is None:
@@ -298,8 +332,9 @@ def plot_daily_event_histogram(
         if valid.empty:
             continue
         delta_days = (target_end.normalize() - valid.index.normalize()).days
-        x_vals = -delta_days
+        x_vals = delta_days
         min_x = min(min_x, int(x_vals.min()))
+        max_x = max(max_x, int(x_vals.max()))
         base_color = cmap(idx % cmap.N)
         alpha = 0.25 + (idx * 0.1)
         ax.bar(
@@ -308,19 +343,20 @@ def plot_daily_event_histogram(
             width=1,
             color=base_color,
             alpha=min(alpha, 0.5),
-            label=f"{label} ({target_end.strftime('%d/%m/%Y')})",
+            label=f"{legend_label_from_stem(label)} ({target_end.strftime('%d/%m/%Y')})",
             align="edge",
         )
-    ax.set_title("Vendite giornaliere - istogramma allineato all'evento")
-    ax.set_xlabel("Giorni prima dell'evento")
-    ax.set_ylabel("Vendite giornaliere")
+    ax.set_title("Daily sales histogram - aligned to the event")
+    ax.set_xlabel("Months before the 7 Chakras")
+    ax.set_ylabel("Daily Tickets")
     ax.grid(True, alpha=0.25)
-    ax.legend(fontsize=9)
-    if min_x == 0:
-        min_x = -1
-    ax.set_xlim(min_x, 0)
-    ax.xaxis.set_major_locator(MultipleLocator(30))
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x)}"))
+    ax.legend(fontsize=LEGEND_FONTSIZE)
+    if min_x == float("inf"):
+        min_x = 0
+    ticks, labels = build_event_ticks(max_x)
+    ax.set_xlim(min_x, max_x)
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -332,7 +368,8 @@ def plot_daily_event_histogram_labeled(
 ) -> None:
     fig, ax = plt.subplots(figsize=(12, 5))
     cmap = plt.get_cmap("tab10")
-    min_x = 0
+    min_x = float("inf")
+    max_x = 0
     for idx, (label, payload) in enumerate(series_map.items()):
         series, target_end = payload
         if series.empty or target_end is None:
@@ -341,8 +378,9 @@ def plot_daily_event_histogram_labeled(
         if valid.empty:
             continue
         delta_days = (target_end.normalize() - valid.index.normalize()).days
-        x_vals = -delta_days
+        x_vals = delta_days
         min_x = min(min_x, int(x_vals.min()))
+        max_x = max(max_x, int(x_vals.max()))
         base_color = cmap(idx % cmap.N)
         alpha = 0.25 + (idx * 0.1)
         bars = ax.bar(
@@ -351,7 +389,7 @@ def plot_daily_event_histogram_labeled(
             width=1,
             color=base_color,
             alpha=min(alpha, 0.5),
-            label=f"{label} ({target_end.strftime('%d/%m/%Y')})",
+            label=f"{legend_label_from_stem(label)} ({target_end.strftime('%d/%m/%Y')})",
             align="edge",
         )
         for bar in bars:
@@ -366,16 +404,17 @@ def plot_daily_event_histogram_labeled(
                     fontsize=6,
                     alpha=0.8,
                 )
-    ax.set_title("Vendite giornaliere (istogramma) - allineate all'evento")
-    ax.set_xlabel("Giorni prima dell'evento")
-    ax.set_ylabel("Vendite giornaliere")
+    ax.set_title("Daily sales histogram (labeled) - aligned to the event")
+    ax.set_xlabel("Months before the 7 Chakras")
+    ax.set_ylabel("Daily Tickets")
     ax.grid(True, alpha=0.25)
-    ax.legend(fontsize=9)
-    if min_x == 0:
-        min_x = -1
-    ax.set_xlim(min_x, 0)
-    ax.xaxis.set_major_locator(MultipleLocator(30))
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x)}"))
+    ax.legend(fontsize=LEGEND_FONTSIZE)
+    if min_x == float("inf"):
+        min_x = 0
+    ticks, labels = build_event_ticks(max_x)
+    ax.set_xlim(min_x, max_x)
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -386,7 +425,8 @@ def plot_cumulative_aligned_event(
     out_path: Path,
 ) -> None:
     fig, ax = plt.subplots(figsize=(12, 5))
-    min_x = 0
+    min_x = float("inf")
+    max_x = 0
     for label, payload in series_map.items():
         series, target_end = payload
         if series.empty or target_end is None:
@@ -395,26 +435,28 @@ def plot_cumulative_aligned_event(
         if valid.empty:
             continue
         delta_days = (target_end.normalize() - valid.index.normalize()).days
-        x_vals = -delta_days
+        x_vals = delta_days
         min_x = min(min_x, int(x_vals.min()))
+        max_x = max(max_x, int(x_vals.max()))
         ax.plot(
             x_vals,
             valid.values,
             marker="o",
             markersize=3,
             linewidth=1.3,
-            label=f"{label} ({target_end.strftime('%d/%m/%Y')})",
+            label=f"{legend_label_from_stem(label)} ({target_end.strftime('%d/%m/%Y')})",
         )
-    ax.set_title("Vendite cumulative - allineate all'evento")
-    ax.set_xlabel("Giorni prima dell'evento")
-    ax.set_ylabel("Vendite cumulative")
+    ax.set_title("Cumulative sales - aligned to the event")
+    ax.set_xlabel("Months before the 7 Chakras")
+    ax.set_ylabel("Cumulative Tickets")
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=9)
-    if min_x == 0:
-        min_x = -1
-    ax.set_xlim(min_x, 0)
-    ax.xaxis.set_major_locator(MultipleLocator(30))
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x)}"))
+    ax.legend(fontsize=LEGEND_FONTSIZE)
+    if min_x == float("inf"):
+        min_x = 0
+    ticks, labels = build_event_ticks(max_x)
+    ax.set_xlim(min_x, max_x)
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
