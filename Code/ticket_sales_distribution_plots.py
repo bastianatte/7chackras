@@ -425,6 +425,104 @@ def plot_daily_aligned_event(
     plt.close(fig)
 
 
+def plot_daily_event_histogram(
+    series_map: Dict[str, Tuple[pd.Series, pd.Timestamp]],
+    out_path: Path,
+) -> None:
+    fig, ax = plt.subplots(figsize=(12, 5))
+    cmap = plt.get_cmap("tab10")
+    min_x = 0
+    for idx, (label, payload) in enumerate(series_map.items()):
+        series, target_end = payload
+        if series.empty or target_end is None:
+            continue
+        valid = series[series.index <= target_end]
+        if valid.empty:
+            continue
+        delta_days = (target_end.normalize() - valid.index.normalize()).days
+        x_vals = -delta_days
+        min_x = min(min_x, int(x_vals.min()))
+        base_color = cmap(idx % cmap.N)
+        alpha = 0.25 + (idx * 0.1)
+        ax.bar(
+            x_vals,
+            valid.values,
+            width=1,
+            color=base_color,
+            alpha=min(alpha, 0.5),
+            label=f"{label} ({target_end.strftime('%d/%m/%Y')})",
+            align="edge",
+        )
+    ax.set_title("Vendite giornaliere - istogramma allineato all'evento")
+    ax.set_xlabel("Giorni prima dell'evento")
+    ax.set_ylabel("Vendite giornaliere")
+    ax.grid(True, alpha=0.25)
+    ax.legend(fontsize=9)
+    if min_x == 0:
+        min_x = -1
+    ax.set_xlim(min_x, 0)
+    ax.xaxis.set_major_locator(MultipleLocator(30))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x)}"))
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_daily_event_histogram_labeled(
+    series_map: Dict[str, Tuple[pd.Series, pd.Timestamp]],
+    out_path: Path,
+) -> None:
+    fig, ax = plt.subplots(figsize=(12, 5))
+    cmap = plt.get_cmap("tab10")
+    min_x = 0
+    for idx, (label, payload) in enumerate(series_map.items()):
+        series, target_end = payload
+        if series.empty or target_end is None:
+            continue
+        valid = series[series.index <= target_end]
+        if valid.empty:
+            continue
+        delta_days = (target_end.normalize() - valid.index.normalize()).days
+        x_vals = -delta_days
+        min_x = min(min_x, int(x_vals.min()))
+        base_color = cmap(idx % cmap.N)
+        alpha = 0.25 + (idx * 0.1)
+        bars = ax.bar(
+            x_vals,
+            valid.values,
+            width=1,
+            color=base_color,
+            alpha=min(alpha, 0.5),
+            label=f"{label} ({target_end.strftime('%d/%m/%Y')})",
+            align="edge",
+        )
+        for bar in bars:
+            height = bar.get_height()
+            if height > 0:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    height + 0.5,
+                    str(int(height)),
+                    ha="center",
+                    va="bottom",
+                    fontsize=6,
+                    alpha=0.8,
+                )
+    ax.set_title("Vendite giornaliere (istogramma) - allineate all'evento")
+    ax.set_xlabel("Giorni prima dell'evento")
+    ax.set_ylabel("Vendite giornaliere")
+    ax.grid(True, alpha=0.25)
+    ax.legend(fontsize=9)
+    if min_x == 0:
+        min_x = -1
+    ax.set_xlim(min_x, 0)
+    ax.xaxis.set_major_locator(MultipleLocator(30))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x)}"))
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
 def plot_cumulative_aligned_event(
     series_map: Dict[str, Tuple[pd.Series, pd.Timestamp]],
     out_path: Path,
@@ -624,6 +722,16 @@ def main() -> None:
             combined_cum_event = output_dir / f"vendite_cumulative_comparativa_event.{args.format}"
             plot_cumulative_aligned_event(event_cum_series, combined_cum_event)
             saved_names.append(combined_cum_event.name)
+            combined_daily_event_hist = (
+                output_dir / f"vendite_giornaliere_comparativa_event_hist.{args.format}"
+            )
+            plot_daily_event_histogram(event_series, combined_daily_event_hist)
+            saved_names.append(combined_daily_event_hist.name)
+            combined_daily_event_hist_label = (
+                output_dir / f"vendite_giornaliere_comparativa_event_hist_label.{args.format}"
+            )
+            plot_daily_event_histogram_labeled(event_series, combined_daily_event_hist_label)
+            saved_names.append(combined_daily_event_hist_label.name)
         print(f"[OK] Salvati: {', '.join(saved_names)}")
 
 

@@ -37,6 +37,9 @@ Grafici comparativi (tutti i CSV sovrapposti, allineati per mese):
 - `vendite_cumulative_comparativa_allineata.png` (ultima entry allineata)
 - `vendite_giornaliere_comparativa_allineata.png` (giornaliere allineate all'ultima entry)
 - `vendite_giornaliere_comparativa_event.png` (vendite giornaliere allineate al giorno del festival per ciascun anno)
+- `vendite_cumulative_comparativa_event.png` (vendite cumulative allineate all’evento)
+- `vendite_giornaliere_comparativa_event_hist.png` (istogramma giornaliero allineato all’evento)
+- `vendite_giornaliere_comparativa_event_hist_label.png` (istogramma con valori per barra)
 
 ## Esecuzione
 
