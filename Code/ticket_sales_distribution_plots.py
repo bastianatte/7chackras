@@ -17,6 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.dates import DateFormatter, MonthLocator
 from matplotlib.ticker import FuncFormatter, MultipleLocator
+import re
 
 READ_KWARGS = {
     "sep": ",",
@@ -60,6 +61,23 @@ def resolve_event_target(stem: str) -> Tuple[Optional[str], Optional[pd.Timestam
     if "2026" in lower:
         return "__year_2026__", EVENT_END_DATES["Attendee_List_Paid_19Gen_16.18pm_FLAT"]
     return None, None
+
+
+def infer_year_from_stem(stem: str) -> str:
+    match = re.search(r"(20\d{2})", stem)
+    return match.group(1) if match else "unknown"
+
+
+def save_daily_csv(daily: pd.Series, year: str, output_dir: Path) -> None:
+    df = pd.DataFrame(
+        {
+            "Data": daily.index.strftime("%Y-%m-%d"),
+            "Biglietti": daily.values.astype(int),
+        }
+    )
+    path = output_dir / f"Festival_{year}_vendite_giornaliere.csv"
+    df.to_csv(path, index=False, encoding="utf-8")
+    print(f"[OK] CSV giornaliero salvato in {path.name}")
 
 
 def normalize_columns(columns: Iterable[str]) -> List[str]:
@@ -222,166 +240,6 @@ def reorder_wrap_series(
     part2 = series.loc[:last_date]
     return pd.concat([part1, part2])
 
-
-
-def plot_combined_daily(series_map: Dict[str, pd.Series], out_path: Path) -> None:
-    fig, ax = plt.subplots(figsize=(12, 5))
-    first_series: Optional[pd.Series] = None
-    for label, daily in series_map.items():
-        if first_series is None:
-            first_series = daily
-        ax.plot(daily.index, daily.values, linewidth=1.3, label=label)
-        nonzero = daily[daily > 0]
-        ax.scatter(
-            nonzero.index,
-            nonzero.values,
-            s=16,
-            marker="o",
-            alpha=0.9,
-        )
-    ax.set_title("Vendite giornaliere - confronto stagionale (Luglio->Luglio)")
-    ax.set_xlabel("Mese")
-    ax.set_ylabel("Biglietti")
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=9)
-    if first_series is not None:
-        ax.set_xlim(first_series.index.min(), first_series.index.max())
-    ax.xaxis.set_major_locator(MonthLocator(interval=1))
-    ax.xaxis.set_major_formatter(DateFormatter("%b"))
-    fig.autofmt_xdate()
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def plot_combined_cumulative(series_map: Dict[str, pd.Series], out_path: Path) -> None:
-    fig, ax = plt.subplots(figsize=(12, 5))
-    first_series: Optional[pd.Series] = None
-    for label, daily in series_map.items():
-        if first_series is None:
-            first_series = daily
-        daily_filled = daily.fillna(0)
-        cumulative = daily_filled.cumsum()
-        cumulative[daily.isna()] = pd.NA
-        ax.plot(
-            cumulative.index,
-            cumulative.values,
-            marker="o",
-            markersize=3,
-            linewidth=1.3,
-            label=label,
-        )
-    ax.set_title("Vendite cumulative - confronto stagionale (Luglio->Luglio)")
-    ax.set_xlabel("Mese")
-    ax.set_ylabel("Cumulato")
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=9)
-    if first_series is not None:
-        ax.set_xlim(first_series.index.min(), first_series.index.max())
-    ax.xaxis.set_major_locator(MonthLocator(interval=1))
-    ax.xaxis.set_major_formatter(DateFormatter("%b"))
-    fig.autofmt_xdate()
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def plot_combined_cumulative_normalized(
-    series_map: Dict[str, pd.Series],
-    out_path: Path,
-) -> None:
-    fig, ax = plt.subplots(figsize=(12, 5))
-    first_series: Optional[pd.Series] = None
-    for label, daily in series_map.items():
-        if first_series is None:
-            first_series = daily
-        daily_filled = daily.fillna(0)
-        cumulative = daily_filled.cumsum()
-        final_value = cumulative.max()
-        if final_value and not pd.isna(final_value):
-            cumulative = cumulative / final_value * 100.0
-        cumulative[daily.isna()] = pd.NA
-        ax.plot(
-            cumulative.index,
-            cumulative.values,
-            marker="o",
-            markersize=3,
-            linewidth=1.3,
-            label=label,
-        )
-    ax.set_title("Vendite cumulative - confronto stagionale (normalizzato)")
-    ax.set_xlabel("Mese")
-    ax.set_ylabel("Cumulato (%)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=9)
-    if first_series is not None:
-        ax.set_xlim(first_series.index.min(), first_series.index.max())
-    ax.xaxis.set_major_locator(MonthLocator(interval=1))
-    ax.xaxis.set_major_formatter(DateFormatter("%b"))
-    fig.autofmt_xdate()
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def plot_combined_cumulative_aligned_end(
-    series_map: Dict[str, pd.Series],
-    out_path: Path,
-) -> None:
-    fig, ax = plt.subplots(figsize=(12, 5))
-    for label, daily in series_map.items():
-        daily_filled = daily.fillna(0)
-        cumulative = daily_filled.cumsum()
-        cumulative[daily.isna()] = pd.NA
-        valid = cumulative.dropna()
-        if valid.empty:
-            continue
-        # Allinea l'ultima entry a x=0 (giorni prima in negativo).
-        x_vals = list(range(-len(valid) + 1, 1))
-        ax.plot(
-            x_vals,
-            valid.values,
-            marker="o",
-            markersize=3,
-            linewidth=1.3,
-            label=label,
-        )
-    ax.set_title("Vendite cumulative - allineate all'ultima entry")
-    ax.set_xlabel("Giorni prima dell'ultima entry")
-    ax.set_ylabel("Cumulato")
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=9)
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def plot_combined_daily_aligned_end(
-    series_map: Dict[str, pd.Series],
-    out_path: Path,
-) -> None:
-    fig, ax = plt.subplots(figsize=(12, 5))
-    for label, daily in series_map.items():
-        valid = daily.dropna()
-        if valid.empty:
-            continue
-        x_vals = list(range(-len(valid) + 1, 1))
-        ax.plot(
-            x_vals,
-            valid.values,
-            marker="o",
-            markersize=3,
-            linewidth=1.3,
-            label=label,
-        )
-    ax.set_title("Vendite giornaliere - allineate all'ultima entry")
-    ax.set_xlabel("Giorni prima dell'ultima entry")
-    ax.set_ylabel("Vendite giornaliere")
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=9)
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
 
 
 def plot_daily_aligned_event(
@@ -584,6 +442,9 @@ def process_file(
         print(f"[SKIP] Nessuna data valida in {path.name}")
         return None
 
+    year = infer_year_from_stem(path.stem)
+    save_daily_csv(daily, year, output_dir)
+
     label = path.stem
     slug = slugify(label)
     daily_path = output_dir / f"{slug}_vendite_giornaliere.{fmt}"
@@ -657,7 +518,6 @@ def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    season_series: Dict[str, pd.Series] = {}
     event_series: Dict[str, Tuple[pd.Series, pd.Timestamp]] = {}
     for input_path in args.inputs:
         path = Path(input_path)
@@ -671,67 +531,32 @@ def main() -> None:
             args.season_months,
         )
         if result is not None:
-            normalized, first_date, last_date, event_payload = result
-            if not normalized.empty:
-                trimmed = trim_to_span(
-                    normalized,
-                    first_date,
-                    last_date,
-                )
-                season_series[path.stem] = reorder_wrap_series(
-                    trimmed,
-                    first_date,
-                    last_date,
-                )
-        if event_payload is not None and not event_payload[0].empty:
-            event_series[path.stem] = event_payload
+            _, _, _, event_payload = result
+            if event_payload is not None and not event_payload[0].empty:
+                event_series[path.stem] = event_payload
 
-    event_cum_series: Dict[str, Tuple[pd.Series, pd.Timestamp]] = {}
-    if season_series:
-        combined_daily = output_dir / f"vendite_giornaliere_comparativa.{args.format}"
-        combined_cumulative = output_dir / f"vendite_cumulative_comparativa.{args.format}"
-        combined_cumulative_norm = (
-            output_dir / f"vendite_cumulative_comparativa_norm.{args.format}"
-        )
-        combined_cumulative_aligned = (
-            output_dir / f"vendite_cumulative_comparativa_allineata.{args.format}"
-        )
-        combined_daily_aligned = (
-            output_dir / f"vendite_giornaliere_comparativa_allineata.{args.format}"
-        )
-        plot_combined_daily(season_series, combined_daily)
-        plot_combined_cumulative(season_series, combined_cumulative)
-        plot_combined_cumulative_normalized(season_series, combined_cumulative_norm)
-        plot_combined_cumulative_aligned_end(season_series, combined_cumulative_aligned)
-        plot_combined_daily_aligned_end(season_series, combined_daily_aligned)
-        saved_names = [
-            combined_daily.name,
-            combined_cumulative.name,
-            combined_cumulative_norm.name,
-            combined_cumulative_aligned.name,
-            combined_daily_aligned.name,
-        ]
+    if event_series:
         print(f"[DEBUG] event_series keys = {list(event_series.keys())}")
-        if event_series:
-            combined_daily_event = output_dir / f"vendite_giornaliere_comparativa_event.{args.format}"
-            plot_daily_aligned_event(event_series, combined_daily_event)
-            saved_names.append(combined_daily_event.name)
-            for label, payload in event_series.items():
-                cum_series = payload[0].sort_index().cumsum()
-                event_cum_series[label] = (cum_series, payload[1])
-            combined_cum_event = output_dir / f"vendite_cumulative_comparativa_event.{args.format}"
-            plot_cumulative_aligned_event(event_cum_series, combined_cum_event)
-            saved_names.append(combined_cum_event.name)
-            combined_daily_event_hist = (
-                output_dir / f"vendite_giornaliere_comparativa_event_hist.{args.format}"
-            )
-            plot_daily_event_histogram(event_series, combined_daily_event_hist)
-            saved_names.append(combined_daily_event_hist.name)
-            combined_daily_event_hist_label = (
-                output_dir / f"vendite_giornaliere_comparativa_event_hist_label.{args.format}"
-            )
-            plot_daily_event_histogram_labeled(event_series, combined_daily_event_hist_label)
-            saved_names.append(combined_daily_event_hist_label.name)
+        event_cum_series: Dict[str, Tuple[pd.Series, pd.Timestamp]] = {}
+        combined_daily_event = output_dir / f"vendite_giornaliere_comparativa_event.{args.format}"
+        plot_daily_aligned_event(event_series, combined_daily_event)
+        saved_names = [combined_daily_event.name]
+        for label, payload in event_series.items():
+            cum_series = payload[0].sort_index().cumsum()
+            event_cum_series[label] = (cum_series, payload[1])
+        combined_cum_event = output_dir / f"vendite_cumulative_comparativa_event.{args.format}"
+        plot_cumulative_aligned_event(event_cum_series, combined_cum_event)
+        saved_names.append(combined_cum_event.name)
+        combined_daily_event_hist = (
+            output_dir / f"vendite_giornaliere_comparativa_event_hist.{args.format}"
+        )
+        plot_daily_event_histogram(event_series, combined_daily_event_hist)
+        saved_names.append(combined_daily_event_hist.name)
+        combined_daily_event_hist_label = (
+            output_dir / f"vendite_giornaliere_comparativa_event_hist_label.{args.format}"
+        )
+        plot_daily_event_histogram_labeled(event_series, combined_daily_event_hist_label)
+        saved_names.append(combined_daily_event_hist_label.name)
         print(f"[OK] Salvati: {', '.join(saved_names)}")
 
 

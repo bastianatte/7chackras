@@ -28,6 +28,7 @@ Per ogni CSV vengono generati:
 
 - `<nome_csv>_vendite_giornaliere.png`
 - `<nome_csv>_vendite_cumulative.png`
+- `Festival_{anno}_vendite_giornaliere.csv` (giorno e biglietti per ricostruire il grafico)
 
 Grafici comparativi (tutti i CSV sovrapposti, allineati per mese):
 
