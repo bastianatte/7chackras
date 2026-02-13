@@ -450,7 +450,6 @@ def plot_daily_event_histogram(
     ax.set_xlim(max_x, min_x)
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=45, ha="right")
-    ax.invert_xaxis()
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -548,7 +547,7 @@ def plot_cumulative_aligned_event(
     if min_x == float("inf"):
         min_x = 0
     ticks, labels = build_event_ticks(max_x)
-    ax.set_xlim(min_x, max_x)
+    ax.set_xlim(max_x, min_x)
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=45, ha="right")
     fig.tight_layout()
