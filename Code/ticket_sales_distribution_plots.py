@@ -96,15 +96,19 @@ def legend_label_from_stem(stem: str) -> str:
     return f"7 Chakras Festival {year}"
 
 
-def save_daily_csv(daily: pd.Series, year: str, output_dir: Path) -> None:
-    df = pd.DataFrame(
+def export_ticket_rows(df: pd.DataFrame, payment_col: str, year: str, output_dir: Path) -> None:
+    date_strings = []
+    for value in df[payment_col]:
+        parsed = parse_payment_date(value)
+        date_strings.append(parsed.strftime("%Y-%m-%d") if not pd.isna(parsed) else "")
+    entries = pd.DataFrame(
         {
-            "Data": daily.index.strftime("%Y-%m-%d"),
-            "Biglietti": daily.values.astype(int),
+            "Data": date_strings,
+            "Biglietti": [1] * len(date_strings),
         }
     )
     path = output_dir / f"Festival_{year}_vendite_giornaliere.csv"
-    df.to_csv(path, index=False, encoding="utf-8")
+    entries.to_csv(path, index=False, encoding="utf-8")
     print(f"[OK] CSV giornaliero salvato in {path.name}")
 
 
@@ -178,6 +182,23 @@ def build_daily_counts(df: pd.DataFrame, date_col: str) -> pd.Series:
     return daily.reindex(full_index, fill_value=0)
 
 
+def build_monthly_summary(daily: pd.Series) -> pd.DataFrame:
+    if daily.empty:
+        return pd.DataFrame(columns=["month_start", "month_label", "tickets_month", "avg_tickets_per_day"])
+    monthly_total = daily.resample("MS").sum()
+    monthly_days = daily.resample("MS").size()
+    monthly_avg = monthly_total / monthly_days
+    summary = pd.DataFrame(
+        {
+            "month_start": monthly_total.index,
+            "month_label": monthly_total.index.strftime("%Y-%m"),
+            "tickets_month": monthly_total.values.astype(int),
+            "avg_tickets_per_day": monthly_avg.values,
+        }
+    )
+    return summary
+
+
 def plot_daily_sales(daily: pd.Series, label: str, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(10, 4))
     legend_name = legend_label_from_stem(label)
@@ -202,6 +223,76 @@ def plot_cumulative_sales(daily: pd.Series, label: str, out_path: Path) -> None:
     ax.set_ylabel("Cumulative Tickets")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=LEGEND_FONTSIZE)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_monthly_sales_histogram(monthly: pd.DataFrame, label: str, out_path: Path) -> None:
+    if monthly.empty:
+        return
+    fig, ax = plt.subplots(figsize=(11, 5))
+    legend_name = legend_label_from_stem(label)
+    x = np.arange(len(monthly))
+    bars = ax.bar(
+        x,
+        monthly["tickets_month"].to_numpy(),
+        color="#1565c0",
+        alpha=0.9,
+        width=0.75,
+        label="Tickets/month",
+    )
+    ax.plot(
+        x,
+        monthly["avg_tickets_per_day"].to_numpy(),
+        color="#e65100",
+        marker="o",
+        linewidth=1.8,
+        label="Avg tickets/day in month",
+    )
+    for idx, bar in enumerate(bars):
+        value = int(bar.get_height())
+        avg = float(monthly.iloc[idx]["avg_tickets_per_day"])
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.8,
+            f"{value}\navg {avg:.2f}/d",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+    ax.set_title(f"Monthly sales histogram - {legend_name}")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Tickets")
+    ax.set_xticks(x)
+    ax.set_xticklabels(monthly["month_label"].tolist(), rotation=45, ha="right")
+    ax.grid(True, axis="y", alpha=0.3)
+    ax.legend(fontsize=LEGEND_FONTSIZE - 1)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_daily_histogram_for_single_month(
+    month_daily: pd.Series,
+    label: str,
+    month_label: str,
+    out_path: Path,
+) -> None:
+    if month_daily.empty:
+        return
+    fig, ax = plt.subplots(figsize=(10, 4))
+    days = month_daily.index.day.to_numpy()
+    values = month_daily.values.astype(int)
+    avg = float(np.mean(values))
+    ax.bar(days, values, color="#2e7d32", alpha=0.9, width=0.9)
+    ax.axhline(avg, color="#e65100", linestyle="--", linewidth=1.5, label=f"Avg/day: {avg:.2f}")
+    legend_name = legend_label_from_stem(label)
+    ax.set_title(f"Daily sales histogram - {legend_name} - {month_label}")
+    ax.set_xlabel("Day of month")
+    ax.set_ylabel("Tickets")
+    ax.grid(True, axis="y", alpha=0.25)
+    ax.legend(fontsize=LEGEND_FONTSIZE - 1)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -308,9 +399,11 @@ def plot_daily_aligned_event(
     if min_x == float("inf"):
         min_x = 0
     ticks, labels = build_event_ticks(max_x)
-    ax.set_xlim(min_x, max_x)
+    ax.set_xlim(max_x, min_x)
+    ax.invert_xaxis()
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.invert_xaxis()
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -354,9 +447,10 @@ def plot_daily_event_histogram(
     if min_x == float("inf"):
         min_x = 0
     ticks, labels = build_event_ticks(max_x)
-    ax.set_xlim(min_x, max_x)
+    ax.set_xlim(max_x, min_x)
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.invert_xaxis()
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -412,7 +506,7 @@ def plot_daily_event_histogram_labeled(
     if min_x == float("inf"):
         min_x = 0
     ticks, labels = build_event_ticks(max_x)
-    ax.set_xlim(min_x, max_x)
+    ax.set_xlim(max_x, min_x)
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=45, ha="right")
     fig.tight_layout()
@@ -485,17 +579,40 @@ def process_file(
         return None
 
     year = infer_year_from_stem(path.stem)
-    save_daily_csv(daily, year, output_dir)
+    export_ticket_rows(df, resolved_col, year, output_dir)
 
     label = path.stem
     slug = slugify(label)
     daily_path = output_dir / f"{slug}_vendite_giornaliere.{fmt}"
     cumulative_path = output_dir / f"{slug}_vendite_cumulative.{fmt}"
+    monthly_hist_path = output_dir / f"{slug}_vendite_mensili_hist.{fmt}"
+    monthly_csv_path = output_dir / f"{slug}_vendite_mensili.csv"
+    monthly_daily_dir = output_dir / f"{slug}_vendite_giornaliere_per_mese"
+    monthly_daily_dir.mkdir(parents=True, exist_ok=True)
 
     plot_daily_sales(daily, label, daily_path)
     plot_cumulative_sales(daily, label, cumulative_path)
+    monthly_summary = build_monthly_summary(daily)
+    plot_monthly_sales_histogram(monthly_summary, label, monthly_hist_path)
+    monthly_saved = []
+    month_index = daily.index.to_period("M")
+    for month in sorted(month_index.unique()):
+        mask = month_index == month
+        month_daily = daily.loc[mask]
+        if month_daily.empty:
+            continue
+        month_label = str(month)
+        month_out = monthly_daily_dir / f"{slug}_vendite_giornaliere_{month_label}.{fmt}"
+        plot_daily_histogram_for_single_month(month_daily, label, month_label, month_out)
+        monthly_saved.append(month_out.name)
+    if not monthly_summary.empty:
+        monthly_summary.to_csv(monthly_csv_path, index=False, encoding="utf-8")
 
-    print(f"[OK] Salvati: {daily_path.name}, {cumulative_path.name}")
+    print(
+        f"[OK] Salvati: {daily_path.name}, {cumulative_path.name}, "
+        f"{monthly_hist_path.name}, {monthly_csv_path.name}, "
+        f"{len(monthly_saved)} istogrammi giornalieri mensili in {monthly_daily_dir.name}"
+    )
     first_real_date = pd.Timestamp(daily.index.min())
     last_real_date = pd.Timestamp(daily.index.max())
     normalized = normalize_daily_to_season(
