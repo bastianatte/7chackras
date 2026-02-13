@@ -112,7 +112,8 @@
         "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2025_onlyGood/Lista_ticket_7chakras_2025_onlyGood_VERIFIED_FLAT.csv",
         "${workspaceFolder}/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_2026_definitivo_FLAT.csv",
         "--output-dir",
-        "${workspaceFolder}/Documenti/Reports/vendite_distribuzione_finePhase1_update2"
+        "${workspaceFolder}/Documenti/Reports/vendite_distribuzione_finePhase1_updateWPicks",
+        "--peak-analysis"
       ]
     },
     {

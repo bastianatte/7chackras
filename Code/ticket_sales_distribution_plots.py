@@ -199,6 +199,145 @@ def build_monthly_summary(daily: pd.Series) -> pd.DataFrame:
     return summary
 
 
+class PeakPeriodicityAnalyzer:
+    def __init__(self, smooth_window: int = 3, peak_quantile: float = 0.90) -> None:
+        self.smooth_window = smooth_window
+        self.peak_quantile = peak_quantile
+
+    def smooth_series(self, daily: pd.Series) -> pd.Series:
+        return daily.rolling(window=self.smooth_window, center=True, min_periods=1).mean()
+
+    def detect_peak_mask(self, smoothed: pd.Series) -> Tuple[pd.Series, float]:
+        if smoothed.empty:
+            return pd.Series(dtype=bool), 0.0
+        threshold = float(smoothed.quantile(self.peak_quantile))
+        prev_vals = smoothed.shift(1).fillna(-np.inf)
+        next_vals = smoothed.shift(-1).fillna(-np.inf)
+        is_local_max = (smoothed >= prev_vals) & (smoothed > next_vals)
+        peak_mask = is_local_max & (smoothed >= threshold) & (smoothed > 0)
+        if not bool(peak_mask.any()) and bool((smoothed > 0).any()):
+            peak_mask = pd.Series(False, index=smoothed.index)
+            peak_mask.loc[smoothed.idxmax()] = True
+        return peak_mask, threshold
+
+    def compute_autocorr_period(self, smoothed: pd.Series, max_lag: int = 60) -> Tuple[float, float]:
+        if len(smoothed) < 3:
+            return np.nan, np.nan
+        upper = min(max_lag, len(smoothed) - 1)
+        if upper < 2:
+            return np.nan, np.nan
+        best_lag = np.nan
+        best_corr = -np.inf
+        for lag in range(2, upper + 1):
+            corr = smoothed.autocorr(lag=lag)
+            if pd.isna(corr):
+                continue
+            if corr > best_corr:
+                best_corr = float(corr)
+                best_lag = float(lag)
+        if best_corr == -np.inf:
+            return np.nan, np.nan
+        return best_lag, best_corr
+
+    def plot_daily_with_peaks(
+        self,
+        daily: pd.Series,
+        smoothed: pd.Series,
+        peak_mask: pd.Series,
+        label: str,
+        out_path: Path,
+    ) -> None:
+        fig, ax = plt.subplots(figsize=(11, 4.5))
+        legend_name = legend_label_from_stem(label)
+        ax.plot(daily.index, daily.values, color="#90caf9", linewidth=1.2, label="Daily tickets")
+        ax.plot(smoothed.index, smoothed.values, color="#1565c0", linewidth=2.0, label=f"Smoothed ({self.smooth_window}d)")
+        peak_points = smoothed[peak_mask]
+        if not peak_points.empty:
+            ax.scatter(peak_points.index, peak_points.values, color="#d81b60", s=30, zorder=4, label="Detected peaks (P90)")
+        ax.set_title(f"Peak periodicity - {legend_name}")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Tickets")
+        ax.grid(True, alpha=0.25)
+        ax.legend(fontsize=LEGEND_FONTSIZE - 1)
+        fig.tight_layout()
+        fig.savefig(out_path)
+        plt.close(fig)
+
+    def plot_peak_gap_histogram(self, peak_dates: pd.Series, label: str, out_path: Path) -> None:
+        if len(peak_dates) < 2:
+            return
+        gaps = peak_dates.diff().dt.days.dropna().astype(int)
+        if gaps.empty:
+            return
+        fig, ax = plt.subplots(figsize=(8, 4))
+        bins = np.arange(gaps.min(), gaps.max() + 2) - 0.5
+        ax.hist(gaps.to_numpy(), bins=bins, color="#2e7d32", alpha=0.85, edgecolor="#1b5e20")
+        ax.set_title(f"Peak interval histogram - {legend_label_from_stem(label)}")
+        ax.set_xlabel("Days between peaks")
+        ax.set_ylabel("Frequency")
+        ax.grid(True, axis="y", alpha=0.25)
+        fig.tight_layout()
+        fig.savefig(out_path)
+        plt.close(fig)
+
+    def analyze_and_save(self, daily: pd.Series, label: str, output_dir: Path, fmt: str) -> Dict[str, object]:
+        dataset_slug = slugify(label)
+        dataset_dir = output_dir / dataset_slug
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+
+        smoothed = self.smooth_series(daily)
+        peak_mask, threshold = self.detect_peak_mask(smoothed)
+
+        analysis_df = pd.DataFrame(
+            {
+                "date": daily.index.strftime("%Y-%m-%d"),
+                "tickets_daily": daily.values.astype(int),
+                "tickets_smoothed": smoothed.values,
+                "is_peak": peak_mask.values.astype(bool),
+            }
+        )
+        analysis_df["dow"] = pd.to_datetime(analysis_df["date"]).dt.day_name()
+        analysis_df["month"] = pd.to_datetime(analysis_df["date"]).dt.to_period("M").astype(str)
+
+        peaks_only = analysis_df[analysis_df["is_peak"]].copy()
+        peak_dates = pd.to_datetime(peaks_only["date"])
+        gaps = peak_dates.diff().dt.days
+        peaks_only["days_since_prev_peak"] = gaps.values
+
+        daily_csv = dataset_dir / f"{dataset_slug}_daily_smoothed_peaks.csv"
+        peaks_csv = dataset_dir / f"{dataset_slug}_peaks_only.csv"
+        plot_main = dataset_dir / f"{dataset_slug}_peak_periodicity.{fmt}"
+        plot_gap = dataset_dir / f"{dataset_slug}_peak_gap_hist.{fmt}"
+        summary_csv = dataset_dir / f"{dataset_slug}_peak_summary.csv"
+
+        analysis_df.to_csv(daily_csv, index=False, encoding="utf-8")
+        peaks_only.to_csv(peaks_csv, index=False, encoding="utf-8")
+        self.plot_daily_with_peaks(daily, smoothed, peak_mask, label, plot_main)
+        self.plot_peak_gap_histogram(peak_dates, label, plot_gap)
+
+        gap_values = gaps.dropna()
+        gap_mean = float(gap_values.mean()) if not gap_values.empty else np.nan
+        gap_median = float(gap_values.median()) if not gap_values.empty else np.nan
+        gap_mode = float(gap_values.mode().iloc[0]) if not gap_values.empty else np.nan
+        best_lag, best_corr = self.compute_autocorr_period(smoothed)
+
+        summary_row = {
+            "dataset": label,
+            "smooth_window_days": self.smooth_window,
+            "peak_quantile": self.peak_quantile,
+            "peak_threshold_smoothed": threshold,
+            "num_peaks": int(peak_mask.sum()),
+            "mean_days_between_peaks": gap_mean,
+            "median_days_between_peaks": gap_median,
+            "mode_days_between_peaks": gap_mode,
+            "autocorr_best_lag_days": best_lag,
+            "autocorr_best_corr": best_corr,
+        }
+        pd.DataFrame([summary_row]).to_csv(summary_csv, index=False, encoding="utf-8")
+        print(f"[OK] Peak analysis salvata in {dataset_dir}")
+        return summary_row
+
+
 def plot_daily_sales(daily: pd.Series, label: str, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(10, 4))
     legend_name = legend_label_from_stem(label)
@@ -562,7 +701,17 @@ def process_file(
     fmt: str,
     season_start_month: int,
     season_months: int,
-) -> Optional[Tuple[pd.Series, pd.Timestamp, pd.Timestamp, Optional[Tuple[pd.Series, pd.Timestamp]]]]:
+    peak_analyzer: Optional[PeakPeriodicityAnalyzer] = None,
+    peak_output_dir: Optional[Path] = None,
+) -> Optional[
+    Tuple[
+        pd.Series,
+        pd.Timestamp,
+        pd.Timestamp,
+        Optional[Tuple[pd.Series, pd.Timestamp]],
+        Optional[Dict[str, object]],
+    ]
+]:
     if not path.exists():
         print(f"[SKIP] File non trovato: {path}")
         return None
@@ -625,7 +774,10 @@ def process_file(
     match_key, target_end = resolve_event_target(path.stem)
     print(f"[DEBUG] stem={path.stem} event_target={target_end}")
     event_payload = (daily, target_end) if target_end is not None else None
-    return normalized, first_date, last_date, event_payload
+    peak_summary = None
+    if peak_analyzer is not None and peak_output_dir is not None:
+        peak_summary = peak_analyzer.analyze_and_save(daily, label, peak_output_dir, fmt)
+    return normalized, first_date, last_date, event_payload, peak_summary
 
 
 def parse_args() -> argparse.Namespace:
@@ -669,6 +821,11 @@ def parse_args() -> argparse.Namespace:
         default=13,
         help="Durata finestra stagionale in mesi (default: 13).",
     )
+    parser.add_argument(
+        "--peak-analysis",
+        action="store_true",
+        help="Esegue analisi periodicita dei picchi (smooth 3 giorni, soglia P90).",
+    )
     return parser.parse_args()
 
 
@@ -677,6 +834,11 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     event_series: Dict[str, Tuple[pd.Series, pd.Timestamp]] = {}
+    peak_analyzer = PeakPeriodicityAnalyzer(smooth_window=3, peak_quantile=0.90) if args.peak_analysis else None
+    peak_output_dir = output_dir / "peak_analysis" if args.peak_analysis else None
+    peak_summaries: List[Dict[str, object]] = []
+    if peak_output_dir is not None:
+        peak_output_dir.mkdir(parents=True, exist_ok=True)
     for input_path in args.inputs:
         path = Path(input_path)
         print(f"[DEBUG] input={path.name} stem={path.stem}")
@@ -687,11 +849,15 @@ def main() -> None:
             args.format,
             args.season_start_month,
             args.season_months,
+            peak_analyzer=peak_analyzer,
+            peak_output_dir=peak_output_dir,
         )
         if result is not None:
-            _, _, _, event_payload = result
+            _, _, _, event_payload, peak_summary = result
             if event_payload is not None and not event_payload[0].empty:
                 event_series[path.stem] = event_payload
+            if peak_summary is not None:
+                peak_summaries.append(peak_summary)
 
     if event_series:
         print(f"[DEBUG] event_series keys = {list(event_series.keys())}")
@@ -716,6 +882,10 @@ def main() -> None:
         plot_daily_event_histogram_labeled(event_series, combined_daily_event_hist_label)
         saved_names.append(combined_daily_event_hist_label.name)
         print(f"[OK] Salvati: {', '.join(saved_names)}")
+    if args.peak_analysis and peak_output_dir is not None and peak_summaries:
+        all_summary_path = peak_output_dir / "peak_periodicity_summary_all.csv"
+        pd.DataFrame(peak_summaries).to_csv(all_summary_path, index=False, encoding="utf-8")
+        print(f"[OK] Peak periodicity summary salvata in {all_summary_path}")
 
 
 if __name__ == "__main__":

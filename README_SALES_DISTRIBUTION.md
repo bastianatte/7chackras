@@ -71,6 +71,12 @@ Per allargare la finestra stagionale (default: 13 mesi):
 python Code/ticket_sales_distribution_plots.py --season-months 15
 ```
 
+Per analisi periodicita picchi (smooth 3 giorni + soglia P90):
+
+```bash
+python Code/ticket_sales_distribution_plots.py --peak-analysis
+```
+
 ## Grafico giornaliero allineato all’evento
 
 Basta eseguire lo script: il file `vendite_giornaliere_comparativa_event.png` mostra le vendite giornaliere per ciascun CSV dopo aver spostato la loro ultima entry sul giorno dell’evento (2019→28/08, 2025→23/06, 2026→14/07). Questo permette di confrontare gli step di vendita con il “countdown” fino al festival, anche se le date reali cadono in mesi diversi.
