@@ -71,10 +71,16 @@ Per allargare la finestra stagionale (default: 13 mesi):
 python Code/ticket_sales_distribution_plots.py --season-months 15
 ```
 
-Per analisi periodicita picchi (smooth 3 giorni + soglia P90):
+Per analisi periodicita picchi (smooth 3 giorni):
 
 ```bash
 python Code/ticket_sales_distribution_plots.py --peak-analysis
+```
+
+Per eseguire piu quantili in una sola run:
+
+```bash
+python Code/ticket_sales_distribution_plots.py --peak-analysis --peak-quantiles 0.8 0.9
 ```
 
 ## Grafico giornaliero allineato all’evento

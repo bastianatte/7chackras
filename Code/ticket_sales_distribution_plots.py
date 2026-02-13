@@ -5,6 +5,7 @@ Genera grafici di vendite giornaliere e cumulative a partire da CSV Tickera.
 from __future__ import annotations
 
 import argparse
+import ast
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -203,6 +204,7 @@ class PeakPeriodicityAnalyzer:
     def __init__(self, smooth_window: int = 3, peak_quantile: float = 0.90) -> None:
         self.smooth_window = smooth_window
         self.peak_quantile = peak_quantile
+        self.quantile_label = f"q{int(round(self.peak_quantile * 100))}"
 
     def smooth_series(self, daily: pd.Series) -> pd.Series:
         return daily.rolling(window=self.smooth_window, center=True, min_periods=1).mean()
@@ -253,7 +255,14 @@ class PeakPeriodicityAnalyzer:
         ax.plot(smoothed.index, smoothed.values, color="#1565c0", linewidth=2.0, label=f"Smoothed ({self.smooth_window}d)")
         peak_points = smoothed[peak_mask]
         if not peak_points.empty:
-            ax.scatter(peak_points.index, peak_points.values, color="#d81b60", s=30, zorder=4, label="Detected peaks (P90)")
+            ax.scatter(
+                peak_points.index,
+                peak_points.values,
+                color="#d81b60",
+                s=30,
+                zorder=4,
+                label=f"Detected peaks ({self.quantile_label.upper()})",
+            )
         ax.set_title(f"Peak periodicity - {legend_name}")
         ax.set_xlabel("Date")
         ax.set_ylabel("Tickets")
@@ -282,7 +291,7 @@ class PeakPeriodicityAnalyzer:
 
     def analyze_and_save(self, daily: pd.Series, label: str, output_dir: Path, fmt: str) -> Dict[str, object]:
         dataset_slug = slugify(label)
-        dataset_dir = output_dir / dataset_slug
+        dataset_dir = output_dir / self.quantile_label / dataset_slug
         dataset_dir.mkdir(parents=True, exist_ok=True)
 
         smoothed = self.smooth_series(daily)
@@ -323,6 +332,7 @@ class PeakPeriodicityAnalyzer:
 
         summary_row = {
             "dataset": label,
+            "quantile_label": self.quantile_label,
             "smooth_window_days": self.smooth_window,
             "peak_quantile": self.peak_quantile,
             "peak_threshold_smoothed": threshold,
@@ -701,7 +711,7 @@ def process_file(
     fmt: str,
     season_start_month: int,
     season_months: int,
-    peak_analyzer: Optional[PeakPeriodicityAnalyzer] = None,
+    peak_analyzers: Optional[List[PeakPeriodicityAnalyzer]] = None,
     peak_output_dir: Optional[Path] = None,
 ) -> Optional[
     Tuple[
@@ -709,7 +719,7 @@ def process_file(
         pd.Timestamp,
         pd.Timestamp,
         Optional[Tuple[pd.Series, pd.Timestamp]],
-        Optional[Dict[str, object]],
+        List[Dict[str, object]],
     ]
 ]:
     if not path.exists():
@@ -774,10 +784,11 @@ def process_file(
     match_key, target_end = resolve_event_target(path.stem)
     print(f"[DEBUG] stem={path.stem} event_target={target_end}")
     event_payload = (daily, target_end) if target_end is not None else None
-    peak_summary = None
-    if peak_analyzer is not None and peak_output_dir is not None:
-        peak_summary = peak_analyzer.analyze_and_save(daily, label, peak_output_dir, fmt)
-    return normalized, first_date, last_date, event_payload, peak_summary
+    peak_summaries: List[Dict[str, object]] = []
+    if peak_analyzers is not None and peak_output_dir is not None:
+        for analyzer in peak_analyzers:
+            peak_summaries.append(analyzer.analyze_and_save(daily, label, peak_output_dir, fmt))
+    return normalized, first_date, last_date, event_payload, peak_summaries
 
 
 def parse_args() -> argparse.Namespace:
@@ -824,17 +835,45 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--peak-analysis",
         action="store_true",
-        help="Esegue analisi periodicita dei picchi (smooth 3 giorni, soglia P90).",
+        help="Esegue analisi periodicita dei picchi (smooth 3 giorni).",
+    )
+    parser.add_argument(
+        "--peak-quantiles",
+        nargs="+",
+        type=str,
+        default=["0.9"],
+        help="Lista quantili picchi. Esempi: --peak-quantiles 0.8 0.9 oppure --peak-quantiles \"[0.9, 0.8, 0.7]\"",
     )
     return parser.parse_args()
 
 
+def parse_peak_quantiles(values: List[str]) -> List[float]:
+    if not values:
+        return [0.9]
+    if len(values) == 1:
+        raw = values[0].strip()
+        if raw.startswith("[") and raw.endswith("]"):
+            parsed = ast.literal_eval(raw)
+            if not isinstance(parsed, (list, tuple)):
+                raise ValueError("Formato --peak-quantiles non valido: usa una lista, es. [0.9, 0.8, 0.7].")
+            return [float(v) for v in parsed]
+        if "," in raw:
+            return [float(part.strip()) for part in raw.split(",") if part.strip()]
+    return [float(v) for v in values]
+
+
 def main() -> None:
     args = parse_args()
+    peak_quantiles = parse_peak_quantiles(args.peak_quantiles)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     event_series: Dict[str, Tuple[pd.Series, pd.Timestamp]] = {}
-    peak_analyzer = PeakPeriodicityAnalyzer(smooth_window=3, peak_quantile=0.90) if args.peak_analysis else None
+    peak_analyzers: List[PeakPeriodicityAnalyzer] = []
+    if args.peak_analysis:
+        for q in peak_quantiles:
+            if not (0 < q < 1):
+                raise ValueError(f"Quantile non valido: {q}. Usa valori tra 0 e 1 (es. 0.8 0.9).")
+            peak_analyzers.append(PeakPeriodicityAnalyzer(smooth_window=3, peak_quantile=q))
     peak_output_dir = output_dir / "peak_analysis" if args.peak_analysis else None
     peak_summaries: List[Dict[str, object]] = []
     if peak_output_dir is not None:
@@ -849,15 +888,14 @@ def main() -> None:
             args.format,
             args.season_start_month,
             args.season_months,
-            peak_analyzer=peak_analyzer,
+            peak_analyzers=peak_analyzers if args.peak_analysis else None,
             peak_output_dir=peak_output_dir,
         )
         if result is not None:
-            _, _, _, event_payload, peak_summary = result
+            _, _, _, event_payload, per_file_peak_summaries = result
             if event_payload is not None and not event_payload[0].empty:
                 event_series[path.stem] = event_payload
-            if peak_summary is not None:
-                peak_summaries.append(peak_summary)
+            peak_summaries.extend(per_file_peak_summaries)
 
     if event_series:
         print(f"[DEBUG] event_series keys = {list(event_series.keys())}")
