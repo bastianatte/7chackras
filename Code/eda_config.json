@@ -1,6 +1,7 @@
 {
-  "csv_path": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_definitivo_FLAT.csv",
-  "output_dir": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_definitivo_FLAT",
+  "csv_path": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/Until_4Marz26_14_31.csv",
+  "output_dir": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/Until_4Marz26_14_31_Analysis",
+
   "plots": {
     "enabled": true,
     "format": "png"
@@ -36,7 +37,10 @@
       "label": "phase 2",
       "color": "#ff6f00"
     }
+  
   ],
+
+
   "columns": {
     "event_name": "Event Name",
     "order_number": "Order Number",
