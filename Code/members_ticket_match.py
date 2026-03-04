@@ -27,13 +27,13 @@ DEFAULT_MEMBERS = Path(__file__).resolve().parents[1] / "Documenti/Libro_Soci_20
 DEFAULT_TICKETS = Path(__file__).resolve().parents[1] / "Documenti/Libro_Soci_2025-2026/ListaTickets_31.12.25_10_50.csv"
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[1] / "Documenti/match_2026_reports"
 
-ATTENDEE_FIRST_NAMES = ["Attendee First Name", "First Name"]
-ATTENDEE_LAST_NAMES = ["Attendee Last Name", "Last Name"]
-ATTENDEE_EMAILS = ["Attendee E-mail"]
+ATTENDEE_FIRST_NAMES = ["Attendee First Name", "First Name", "Nome"]
+ATTENDEE_LAST_NAMES = ["Attendee Last Name", "Last Name", "Cognome"]
+ATTENDEE_EMAILS = ["Attendee E-mail", "Email", "E-mail"]
 BUYER_EMAILS = ["Buyer E-Mail"]
 BUYER_FIRST_NAMES = ["Buyer First Name"]
 BUYER_LAST_NAMES = ["Buyer Last Name"]
-ORDER_STATUS_COLS = ["Order Status"]
+ORDER_STATUS_COLS = ["Order Status", "Stato Ordine", "Stato ordine", "Pagamento", "Stato Pagamento"]
 ORDER_NUMBER_COLS = ["Order Number"]
 TICKET_TYPE_COLS = ["Ticket Type"]
 
@@ -172,14 +172,20 @@ def load_paid_attendees(path: Path) -> Tuple[pd.DataFrame, str, str, str, str, s
     last_col = find_column(df, ATTENDEE_LAST_NAMES)
     email_col = find_column(df, ATTENDEE_EMAILS)
     buyer_email_col = find_column(df, BUYER_EMAILS, required=False) or ""
-    status_col = find_column(df, ORDER_STATUS_COLS)
+    status_col = find_column(df, ORDER_STATUS_COLS, required=False) or ""
     order_col = find_column(df, ORDER_NUMBER_COLS, required=False) or ""
     type_col = find_column(df, TICKET_TYPE_COLS, required=False) or ""
     buyer_first_col = find_column(df, BUYER_FIRST_NAMES, required=False) or ""
     buyer_last_col = find_column(df, BUYER_LAST_NAMES, required=False) or ""
 
-    df["order_status_clean"] = df[status_col].fillna("").str.strip().str.lower()
-    paid = df[df["order_status_clean"] == "paid"].copy()
+    if status_col:
+        df["order_status_clean"] = df[status_col].fillna("").str.strip().str.lower()
+        paid = df[df["order_status_clean"].isin({"paid", "pagato", "completato"})].copy()
+    else:
+        # Some exports (e.g. Italian attendee/member lists) do not include order status.
+        # In that case we treat all rows as paid/eligible for matching.
+        df["order_status_clean"] = ""
+        paid = df.copy()
 
     attendee_first = paid[first_col].fillna("").astype(str).str.strip()
     attendee_last = paid[last_col].fillna("").astype(str).str.strip()
@@ -424,10 +430,28 @@ def main() -> None:
     def existing_cols(df: pd.DataFrame, candidates: Iterable[str]) -> list[str]:
         return [c for c in candidates if c and c in df.columns]
 
+    def merged_col(df: pd.DataFrame, base: str, side: str) -> str:
+        suffixed = f"{base}_{side}"
+        if suffixed in df.columns:
+            return suffixed
+        if base in df.columns:
+            return base
+        return ""
+
+    def existing_merged_cols(df: pd.DataFrame, candidates: Iterable[str], side: str) -> list[str]:
+        cols: list[str] = []
+        for base in candidates:
+            if not base:
+                continue
+            resolved = merged_col(df, base, side)
+            if resolved:
+                cols.append(resolved)
+        return cols
+
+    member_name_cols = existing_merged_cols(matched_strong, ["Cognome", "Nome", "Email"], "member")
+
     match_cols = [
-        "Cognome",
-        "Nome",
-        "Email",
+        *member_name_cols,
         "buyer_email_match",
         "params_available",
         "params_matched",
@@ -435,9 +459,10 @@ def main() -> None:
         "match_percent",
         "matched_params",
     ]
-    match_cols += existing_cols(
+    match_cols += existing_merged_cols(
         matched_strong,
         [last_col, first_col, buyer_last_col, buyer_first_col, email_col, buyer_email_col, order_col, type_col],
+        "ticket",
     )
     ticket_name = args.tickets.name
     suffix = ticket_name[ticket_name.find("_") :] if "_" in ticket_name else f"_{ticket_name}"
@@ -453,9 +478,7 @@ def main() -> None:
     save_csv(matched_email_diff[diff_cols], out_dir / f"match2026_email_diversa{suffix}")
 
     sim_cols = [
-        "Cognome",
-        "Nome",
-        "Email",
+        *member_name_cols,
         "name_sim_reason",
         "buyer_email_match",
         "params_available",
@@ -467,17 +490,20 @@ def main() -> None:
     sim_cols = [c for c in sim_cols if c in matched_name_similar.columns]
     save_csv(matched_name_similar[sim_cols], out_dir / f"match2026_nome_simile{suffix}")
 
-    save_csv(soci_no_match[["Cognome", "Nome", "Email"]], out_dir / f"soci_senza_match2026{suffix}")
+    soci_cols = existing_merged_cols(soci_no_match, ["Cognome", "Nome", "Email"], "member")
+    save_csv(soci_no_match[soci_cols], out_dir / f"soci_senza_match2026{suffix}")
 
-    no_soci_cols = existing_cols(
+    no_soci_cols = existing_merged_cols(
         attendees_no_member,
         [last_col, first_col, buyer_last_col, buyer_first_col, email_col, buyer_email_col, order_col, type_col],
+        "ticket",
     )
     save_csv(attendees_no_member[no_soci_cols], out_dir / f"noSoci2025{suffix}")
 
-    dup_cols = existing_cols(
+    dup_cols = existing_merged_cols(
         duplicates,
         [last_col, first_col, buyer_last_col, buyer_first_col, email_col, order_col, type_col, "order_status_clean"],
+        "ticket",
     )
     save_csv(duplicates[dup_cols], out_dir / f"duplicati2026{suffix}")
 
