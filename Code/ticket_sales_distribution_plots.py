@@ -862,6 +862,102 @@ def parse_peak_quantiles(values: List[str]) -> List[float]:
     return [float(v) for v in values]
 
 
+def generate_peak_text_report(summary_df: pd.DataFrame, peak_output_dir: Path, out_path: Path) -> None:
+    if summary_df.empty:
+        return
+
+    day_order_en = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    it_day = {
+        "Monday": "Lunedi",
+        "Tuesday": "Martedi",
+        "Wednesday": "Mercoledi",
+        "Thursday": "Giovedi",
+        "Friday": "Venerdi",
+        "Saturday": "Sabato",
+        "Sunday": "Domenica",
+    }
+
+    peak_rows: List[pd.DataFrame] = []
+    for _, row in summary_df.iterrows():
+        dataset = str(row["dataset"])
+        qlabel = str(row["quantile_label"])
+        dataset_slug = slugify(dataset)
+        peaks_file = peak_output_dir / qlabel / dataset_slug / f"{dataset_slug}_peaks_only.csv"
+        if not peaks_file.exists():
+            continue
+        peaks_df = pd.read_csv(peaks_file)
+        peaks_df["dataset"] = dataset
+        peaks_df["quantile_label"] = qlabel
+        peak_rows.append(peaks_df)
+
+    all_peaks = pd.concat(peak_rows, ignore_index=True) if peak_rows else pd.DataFrame()
+
+    lines: List[str] = []
+    lines.append("RELAZIONE ANALISI PERIODICITA PICCHI DI VENDITA TICKET")
+    lines.append("")
+    lines.append("File sorgente riepilogo: peak_periodicity_summary_all.csv")
+    lines.append(f"Totale combinazioni analizzate (dataset x quantile): {len(summary_df)}")
+    lines.append("Quantili considerati: " + ", ".join(sorted(summary_df["quantile_label"].unique())))
+    lines.append("Smooth: 3 giorni; analisi sull'intero periodo per ciascun dataset.")
+    lines.append("")
+    lines.append("1) Sintesi comparativa per dataset e quantile")
+
+    for dataset in summary_df["dataset"].drop_duplicates():
+        sub = summary_df[summary_df["dataset"] == dataset].copy()
+        lines.append(f"- Dataset: {dataset}")
+        for _, r in sub.sort_values("peak_quantile", ascending=False).iterrows():
+            lines.append(
+                f"  {r['quantile_label']}: picchi={int(r['num_peaks'])}, "
+                f"soglia_smoothed={r['peak_threshold_smoothed']:.2f}, "
+                f"media_giorni_tra_picchi={r['mean_days_between_peaks']:.2f}, "
+                f"mediana={r['median_days_between_peaks']:.2f}, "
+                f"moda={r['mode_days_between_peaks']:.2f}, "
+                f"autocorr_best_lag={r['autocorr_best_lag_days']:.0f} gg (corr={r['autocorr_best_corr']:.3f})"
+            )
+        lines.append("")
+
+    lines.append("2) Giorno della settimana: distribuzione picchi")
+    if not all_peaks.empty and "dow" in all_peaks.columns:
+        all_peaks = all_peaks.dropna(subset=["dow"])
+        for qlabel in sorted(summary_df["quantile_label"].unique()):
+            qpeaks = all_peaks[all_peaks["quantile_label"] == qlabel]
+            vc = qpeaks["dow"].value_counts()
+            total = int(vc.sum())
+            lines.append(f"- {qlabel}: totale picchi={total}")
+            for day in day_order_en:
+                n = int(vc.get(day, 0))
+                pct = 100.0 * n / total if total else 0.0
+                lines.append(f"  {it_day[day]}: {n} ({pct:.1f}%)")
+            if total:
+                top_day = str(vc.index[0])
+                lines.append(f"  Giorno dominante {qlabel}: {it_day.get(top_day, top_day)} ({int(vc.iloc[0])} picchi).")
+            lines.append("")
+
+        lines.append("3) Focus Mercoledi vs Giovedi")
+        for qlabel in sorted(summary_df["quantile_label"].unique()):
+            qpeaks = all_peaks[all_peaks["quantile_label"] == qlabel]
+            wed = int((qpeaks["dow"] == "Wednesday").sum())
+            thu = int((qpeaks["dow"] == "Thursday").sum())
+            if wed > thu:
+                verdict = "Mercoledi prevale su Giovedi"
+            elif thu > wed:
+                verdict = "Giovedi prevale su Mercoledi"
+            else:
+                verdict = "Mercoledi e Giovedi sono in parita"
+            lines.append(f"- {qlabel}: Mercoledi={wed}, Giovedi={thu} -> {verdict}.")
+        lines.append("")
+    else:
+        lines.append("- Nessun file peaks_only disponibile per il breakdown per giorno.")
+        lines.append("")
+
+    lines.append("4) Nota metodologica")
+    lines.append("- Picco: serie smussata 3 giorni + massimo locale + superamento quantile.")
+    lines.append("- q90: visione piu selettiva; q70: visione piu sensibile (piu picchi).")
+    lines.append("- Le differenze tra dataset riflettono anche periodi di vendita con durate diverse.")
+
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def main() -> None:
     args = parse_args()
     peak_quantiles = parse_peak_quantiles(args.peak_quantiles)
@@ -922,8 +1018,21 @@ def main() -> None:
         print(f"[OK] Salvati: {', '.join(saved_names)}")
     if args.peak_analysis and peak_output_dir is not None and peak_summaries:
         all_summary_path = peak_output_dir / "peak_periodicity_summary_all.csv"
-        pd.DataFrame(peak_summaries).to_csv(all_summary_path, index=False, encoding="utf-8")
+        summary_df = pd.DataFrame(peak_summaries)
+        summary_df.to_csv(all_summary_path, index=False, encoding="utf-8")
+        report_path = peak_output_dir / "peak_periodicity_summary_all_report.txt"
+        generate_peak_text_report(summary_df, peak_output_dir, report_path)
         print(f"[OK] Peak periodicity summary salvata in {all_summary_path}")
+        print(f"[OK] Peak periodicity report salvato in {report_path}")
+        for dataset in summary_df["dataset"].drop_duplicates():
+            dataset_df = summary_df[summary_df["dataset"] == dataset].copy()
+            dataset_slug = slugify(str(dataset))
+            dataset_summary_path = peak_output_dir / f"{dataset_slug}_peak_periodicity_summary.csv"
+            dataset_report_path = peak_output_dir / f"{dataset_slug}_peak_periodicity_report.txt"
+            dataset_df.to_csv(dataset_summary_path, index=False, encoding="utf-8")
+            generate_peak_text_report(dataset_df, peak_output_dir, dataset_report_path)
+            print(f"[OK] Dataset summary salvata in {dataset_summary_path}")
+            print(f"[OK] Dataset report salvato in {dataset_report_path}")
 
 
 if __name__ == "__main__":
