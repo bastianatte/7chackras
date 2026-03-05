@@ -36,8 +36,17 @@
       "date": "2026-02-01",
       "label": "phase 2",
       "color": "#ff6f00"
+    },
+    {
+      "date": "2026-02-13",
+      "label": "Start Lovers Bundle",
+      "color": "#ff6f00"
+    },
+    {
+      "date": "2026-02-15",
+      "label": "End Lovers Bundle",
+      "color": "#ff6f00"
     }
-  
   ],
 
 
