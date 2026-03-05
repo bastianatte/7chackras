@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Analisi EDA del festival 7 Chakras.
 
@@ -158,10 +158,9 @@ def extract_phase_label(value: object) -> str:
         return "unknown"
     if "early" in text:
         return "early_bird"
-    if "phase 0" in text or "phase0" in text:
-        return "phase_0"
-    if "phase 1" in text or "phase1" in text:
-        return "phase_1"
+    phase_match = re.search(r"\bphase\s*([0-9]+)\b", text)
+    if phase_match:
+        return f"phase_{phase_match.group(1)}"
     if "christmas" in text:
         return "christmas"
     if "ambassador" in text:
@@ -353,18 +352,18 @@ def analyze_geography(
 
     for col in geo_city_cols:
         by_city = df.groupby(col, dropna=False).size().sort_values(ascending=False)
-        print(f"\nTop città ({col}):")
+        print(f"\nTop cittÃ  ({col}):")
         print(by_city.head(20))
         if plots_enabled:
             city_plot = drop_nan_categories(by_city).head(15)
             if city_plot.empty:
-                print(f" - Nessun dato valido per il grafico città ({col}).")
+                print(f" - Nessun dato valido per il grafico cittÃ  ({col}).")
             else:
                 fig, ax = plt.subplots(figsize=(10, 7))
                 city_plot.plot(kind="barh", ax=ax, color="#00838f")
                 ax.set_title("")
                 ax.set_xlabel("Biglietti")
-                ax.set_ylabel("Città di provenienza")
+                ax.set_ylabel("CittÃ  di provenienza")
                 for bar in ax.patches:
                     bar.set_height(0.9)
                 ax.tick_params(axis="both", labelsize=12)
@@ -458,31 +457,31 @@ def export_summary_tables(
         by_type = pd.concat([by_type, total_row])
         by_type = by_type.rename(
             columns={
-                "revenue": "Total Amount (€)",
-                "unit_price_eur": "Unit Price (€)",
-                "expected_amount_eur": "Expected Amount (€)",
-                "diff_amount_eur": "Diff (€)",
-                "total_ass_eur": "Total Ass (€)",
-                "total_festival_eur": "Total Festival (€)",
+                "revenue": "Total Amount (â‚¬)",
+                "unit_price_eur": "Unit Price (â‚¬)",
+                "expected_amount_eur": "Expected Amount (â‚¬)",
+                "diff_amount_eur": "Diff (â‚¬)",
+                "total_ass_eur": "Total Ass (â‚¬)",
+                "total_festival_eur": "Total Festival (â‚¬)",
             }
         )
         ordered_cols = [
             "tickets",
-            "Unit Price (€)",
-            "Total Ass (€)",
-            "Total Festival (€)",
-            "Total Amount (€)",
-            "Expected Amount (€)",
-            "Diff (€)",
+            "Unit Price (â‚¬)",
+            "Total Ass (â‚¬)",
+            "Total Festival (â‚¬)",
+            "Total Amount (â‚¬)",
+            "Expected Amount (â‚¬)",
+            "Diff (â‚¬)",
         ]
         by_type = by_type[[c for c in ordered_cols if c in by_type.columns]]
         for col in [
-            "Total Amount (€)",
-            "Unit Price (€)",
-            "Expected Amount (€)",
-            "Diff (€)",
-            "Total Ass (€)",
-            "Total Festival (€)",
+            "Total Amount (â‚¬)",
+            "Unit Price (â‚¬)",
+            "Expected Amount (â‚¬)",
+            "Diff (â‚¬)",
+            "Total Ass (â‚¬)",
+            "Total Festival (â‚¬)",
         ]:
             by_type[col] = by_type[col].map(format_eur)
         exports["by_type.csv"] = by_type
@@ -519,8 +518,8 @@ def export_summary_tables(
             index=["TOTAL"],
         )
         by_gateway = pd.concat([by_gateway, total_row])
-        by_gateway = by_gateway.rename(columns={"revenue": "Total Amount (€)"})
-        by_gateway["Total Amount (€)"] = by_gateway["Total Amount (€)"].map(format_eur)
+        by_gateway = by_gateway.rename(columns={"revenue": "Total Amount (â‚¬)"})
+        by_gateway["Total Amount (â‚¬)"] = by_gateway["Total Amount (â‚¬)"].map(format_eur)
         exports["by_payment_gateway.csv"] = by_gateway
 
     for name, table in exports.items():
@@ -558,7 +557,7 @@ def export_summary_tables(
             scale_y_override = None
             bbox_override = None
             header_font_size = 12
-            header_labels_override = ["", "tickets", "Total €"]
+            header_labels_override = ["", "tickets", "Total â‚¬"]
             row_height_override = 1.5
             header_height_override = 1.8
             manual_table = True
@@ -607,7 +606,7 @@ def normalize_and_prepare_columns(
         for candidate in candidates:
             if candidate and candidate in df.columns:
                 return candidate
-        return name
+        return None
 
     def resolve_existing_list(names: Iterable[Optional[str]]) -> List[str]:
         resolved: List[str] = []
@@ -692,6 +691,9 @@ def normalize_and_prepare_columns(
     for email_col in filter(None, [attendee_email_col, buyer_email_col]):
         if email_col in df.columns:
             df[email_col] = df[email_col].astype(str).str.strip().str.lower()
+
+    if not attendee_email_col:
+        print("\nALERT: colonna attendee email mancante; i controlli basati su Attendee E-mail verranno saltati.")
 
     present_checkin_cols = [c for c in checkin_columns if c in df.columns]
 
@@ -903,7 +905,8 @@ def save_table_image(
                     x = (x_positions[col_idx] + x_positions[col_idx + 1]) / 2
                     ha = "center"
                 weight = "bold" if highlight_value and str(row[0]).strip().lower() == highlight_value.lower() else "normal"
-                ax.text(x, y, str(value), ha=ha, va="center", fontsize=font_size, weight=weight)
+                cell_font_size = font_size if col_idx == 0 else font_size + 3
+                ax.text(x, y, str(value), ha=ha, va="center", fontsize=cell_font_size, weight=weight)
         out_path = destination / f"{name}.{fmt}"
         fig.tight_layout()
         fig.savefig(out_path, bbox_inches="tight")
@@ -977,7 +980,7 @@ def format_eur(value: object) -> str:
         return ""
     rounded = round(amount)
     formatted = f"{rounded:,.0f}".replace(",", ".")
-    return f"{formatted} €"
+    return f"{formatted} \u20ac"
 
 
 def main() -> None:
@@ -1042,7 +1045,7 @@ def main() -> None:
         for candidate in candidates:
             if candidate and candidate in df.columns:
                 return candidate
-        return name
+        return None
 
     def resolve_existing_list(names: Iterable[Optional[str]]) -> List[str]:
         resolved: List[str] = []
@@ -1172,7 +1175,7 @@ def main() -> None:
         discount_col,
         *geo_report_cols,
     ]
-    key_fields = [c for c in key_fields if c]
+    key_fields = [c for c in key_fields if c and c in df.columns]
     report_missing(df, key_fields, "Campi chiave")
 
     if key_fields:
@@ -1277,14 +1280,14 @@ def main() -> None:
             index=["TOTAL"],
         )
         phase_table = pd.concat([phase_table, total_row])
-        phase_table = phase_table.rename(columns={"amount_eur": "Total Amount (€)"})
-        phase_table["Total Amount (€)"] = phase_table["Total Amount (€)"].map(format_eur)
+        phase_table = phase_table.rename(columns={"amount_eur": "Total Amount (â‚¬)"})
+        phase_table["Total Amount (â‚¬)"] = phase_table["Total Amount (â‚¬)"].map(format_eur)
         phase_path = output_dir / "phase_revenue_from_ticket_type.csv"
         phase_table.to_csv(phase_path, encoding="utf-8")
         print(f"\nRicavi per fase (da Ticket Type) salvati in: {phase_path}")
         save_table_image(phase_table, plots_dir, "table_phase_revenue_from_ticket_type", plot_format)
         if "TOTAL" in phase_table.index:
-            total_eur = phase_table.loc["TOTAL", "Total Amount (€)"]
+            total_eur = phase_table.loc["TOTAL", "Total Amount (â‚¬)"]
             print(f"Totale incassato (da Ticket Type): {total_eur}")
 
     # === Ambassador summary ==================================================
@@ -1298,32 +1301,108 @@ def main() -> None:
                         return name
                 return ""
 
-            df["ambassador_name"] = df.apply(find_ambassador, axis=1)
-            ambassadors = df[df["ambassador_name"] != ""].copy()
+            amb_name_col = "__ambassador_name_calc"
+            while amb_name_col in df.columns:
+                amb_name_col = f"{amb_name_col}_x"
+            phase_col = "__phase_label_calc"
+            while phase_col in df.columns:
+                phase_col = f"{phase_col}_x"
+            ticket_type_amount_col = "__ticket_type_amount_eur_calc"
+            while ticket_type_amount_col in df.columns:
+                ticket_type_amount_col = f"{ticket_type_amount_col}_x"
+            row_amount_col = "__row_amount_eur_calc"
+            while row_amount_col in df.columns:
+                row_amount_col = f"{row_amount_col}_x"
+
+            df[amb_name_col] = df.apply(find_ambassador, axis=1)
+            ambassadors = df[df[amb_name_col] != ""].copy()
             if not ambassadors.empty:
-                amb_table = (
-                    ambassadors.groupby("ambassador_name", dropna=False)
-                    .agg(
-                        tickets=("ambassador_name", "size"),
-                        revenue=(ticket_total_num, "sum")
-                        if ticket_total_num in df.columns
-                        else ("ambassador_name", "size"),
+                if ticket_type_col and ticket_type_col in ambassadors.columns:
+                    ambassadors[phase_col] = ambassadors[ticket_type_col].map(extract_phase_label)
+                    ambassadors[ticket_type_amount_col] = ambassadors[ticket_type_col].map(
+                        extract_ticket_type_amount
                     )
-                    .sort_values(["tickets"], ascending=False)
+                else:
+                    ambassadors[phase_col] = "unknown"
+                    ambassadors[ticket_type_amount_col] = np.nan
+
+                if ticket_total_num and ticket_total_num in ambassadors.columns:
+                    ambassadors[row_amount_col] = ambassadors[ticket_total_num]
+                    ambassadors[row_amount_col] = ambassadors[row_amount_col].fillna(
+                        ambassadors[ticket_type_amount_col]
+                    )
+                else:
+                    ambassadors[row_amount_col] = ambassadors[ticket_type_amount_col]
+
+                phase_counts = (
+                    ambassadors.groupby([amb_name_col, phase_col], dropna=False)
+                    .size()
+                    .unstack(fill_value=0)
+                    .astype(int)
                 )
-                total_row = pd.DataFrame(
-                    {
-                        "tickets": [amb_table["tickets"].sum()],
-                        "revenue": [amb_table["revenue"].sum()],
-                    },
-                    index=["TOTAL"],
-                )
+
+                def phase_sort_key(label: object) -> tuple[int, object]:
+                    txt = str(label)
+                    m = re.match(r"phase_(\d+)$", txt)
+                    if m:
+                        return (0, int(m.group(1)))
+                    if txt == "early_bird":
+                        return (1, 0)
+                    if txt == "christmas":
+                        return (2, 0)
+                    if txt == "ambassador":
+                        return (3, 0)
+                    if txt == "unknown":
+                        return (9, 0)
+                    return (4, txt)
+
+                phase_cols = sorted(phase_counts.columns.tolist(), key=phase_sort_key)
+                phase_counts = phase_counts[phase_cols]
+
+                phase_price_map: dict[str, str] = {}
+                phase_price_source = ambassadors[[phase_col, ticket_type_amount_col]].copy()
+                phase_price_source = phase_price_source.dropna(subset=[ticket_type_amount_col])
+                if not phase_price_source.empty:
+                    for phase_name, group in phase_price_source.groupby(phase_col, dropna=False):
+                        prices = sorted({int(round(float(v))) for v in group[ticket_type_amount_col].tolist()})
+                        if prices:
+                            if len(prices) == 1:
+                                phase_price_map[str(phase_name)] = f"{prices[0]} €"
+                            else:
+                                joined = "/".join(str(p) for p in prices)
+                                phase_price_map[str(phase_name)] = f"{joined} €"
+
+                amount_by_amb = ambassadors.groupby(amb_name_col, dropna=False)[row_amount_col].sum()
+                amount_col = "Total Amount (\u20ac)"
+                amb_table = phase_counts.copy()
+                amb_table.insert(0, "tickets_total", amb_table.sum(axis=1))
+                amb_table[amount_col] = amount_by_amb
+                amb_table[amount_col] = amb_table[amount_col].fillna(0.0)
+                amb_table = amb_table.sort_values(["tickets_total"], ascending=False)
+                amb_table.index.name = "ambassador"
+
+                total_values: dict[str, object] = {"tickets_total": int(amb_table["tickets_total"].sum())}
+                for col in phase_cols:
+                    total_values[col] = int(amb_table[col].sum())
+                total_values[amount_col] = float(amb_table[amount_col].sum())
+                total_row = pd.DataFrame([total_values], index=["TOTAL"])
                 amb_table = pd.concat([amb_table, total_row])
-                amb_table = amb_table.rename(columns={"revenue": "Total Amount (€)"})
-                amb_table["Total Amount (€)"] = amb_table["Total Amount (€)"].map(format_eur)
+                phase_renames: dict[str, str] = {}
+                for col in phase_cols:
+                    price_label = phase_price_map.get(str(col))
+                    if price_label:
+                        phase_renames[col] = f"{col} ({price_label})"
+                if phase_renames:
+                    amb_table = amb_table.rename(columns=phase_renames)
+                amb_table[amount_col] = amb_table[amount_col].map(format_eur)
                 amb_path = output_dir / "ambassador_sales.csv"
                 amb_table.to_csv(amb_path, encoding="utf-8")
                 print(f"\nReport ambassador salvato in: {amb_path}")
+                shown_cols_count = len(amb_table.columns) + 1
+                first_col_width = 0.38
+                other_col_width = (1.0 - first_col_width) / max(1, shown_cols_count - 1)
+                amb_col_widths = [first_col_width] + [other_col_width] * (shown_cols_count - 1)
+                table_width = max(12.0, 1.9 * shown_cols_count)
                 save_table_image(
                     amb_table,
                     plots_dir,
@@ -1331,14 +1410,13 @@ def main() -> None:
                     plot_format,
                     highlight_value="TOTAL",
                     manual_table=True,
-                    col_widths_override=[0.73, 0.11, 0.16],
+                    col_widths_override=amb_col_widths,
                     font_size=14,
-                    fig_width_override=6.0,
+                    fig_width_override=table_width,
                     fig_height_override=max(6.0, 0.7 * len(amb_table)),
-                    header_font_size=12,
-                    header_labels_override=["", "tickets", "Total €"],
-                    row_height_override=1.5,
-                    header_height_override=1.8,
+                    header_font_size=13,
+                    row_height_override=1.45,
+                    header_height_override=1.7,
                 )
 
     # === Payment Gateway =====================================================
@@ -1520,3 +1598,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
