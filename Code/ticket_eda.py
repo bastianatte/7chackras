@@ -388,6 +388,7 @@ def export_summary_tables(
     exports: Dict[str, pd.DataFrame] = {}
     if ticket_type_col in df.columns:
         unit_price_col = "_ticket_type_amount_eur"
+        row_amount_col = "_row_amount_eur"
         df[unit_price_col] = df[ticket_type_col].map(extract_ticket_type_amount)
 
         def normalize_label(label: str) -> str:
@@ -417,11 +418,16 @@ def export_summary_tables(
                 return price / size
             return price
 
+        if ticket_total_num and ticket_total_num in df.columns:
+            df[row_amount_col] = df[ticket_total_num].fillna(df[unit_price_col])
+        else:
+            df[row_amount_col] = df[unit_price_col]
+
         by_type = (
             df.groupby(ticket_type_col, dropna=False)
             .agg(
                 tickets=(ticket_type_col, "size"),
-                revenue=(ticket_total_num, "sum") if ticket_total_num in df.columns else (ticket_type_col, "size"),
+                revenue=(row_amount_col, "sum"),
                 unit_price_eur=(
                     unit_price_col,
                     lambda s: s.dropna().iloc[0] if not s.dropna().empty else np.nan,
@@ -457,31 +463,31 @@ def export_summary_tables(
         by_type = pd.concat([by_type, total_row])
         by_type = by_type.rename(
             columns={
-                "revenue": "Total Amount (â‚¬)",
-                "unit_price_eur": "Unit Price (â‚¬)",
-                "expected_amount_eur": "Expected Amount (â‚¬)",
-                "diff_amount_eur": "Diff (â‚¬)",
-                "total_ass_eur": "Total Ass (â‚¬)",
-                "total_festival_eur": "Total Festival (â‚¬)",
+                "revenue": "Total Amount (€)",
+                "unit_price_eur": "Unit Price (€)",
+                "expected_amount_eur": "Expected Amount (€)",
+                "diff_amount_eur": "Diff (€)",
+                "total_ass_eur": "Total Ass (€)",
+                "total_festival_eur": "Total Festival (€)",
             }
         )
         ordered_cols = [
             "tickets",
-            "Unit Price (â‚¬)",
-            "Total Ass (â‚¬)",
-            "Total Festival (â‚¬)",
-            "Total Amount (â‚¬)",
-            "Expected Amount (â‚¬)",
-            "Diff (â‚¬)",
+            "Unit Price (€)",
+            "Total Ass (€)",
+            "Total Festival (€)",
+            "Total Amount (€)",
+            "Expected Amount (€)",
+            "Diff (€)",
         ]
         by_type = by_type[[c for c in ordered_cols if c in by_type.columns]]
         for col in [
-            "Total Amount (â‚¬)",
-            "Unit Price (â‚¬)",
-            "Expected Amount (â‚¬)",
-            "Diff (â‚¬)",
-            "Total Ass (â‚¬)",
-            "Total Festival (â‚¬)",
+            "Total Amount (€)",
+            "Unit Price (€)",
+            "Expected Amount (€)",
+            "Diff (€)",
+            "Total Ass (€)",
+            "Total Festival (€)",
         ]:
             by_type[col] = by_type[col].map(format_eur)
         exports["by_type.csv"] = by_type
@@ -518,8 +524,8 @@ def export_summary_tables(
             index=["TOTAL"],
         )
         by_gateway = pd.concat([by_gateway, total_row])
-        by_gateway = by_gateway.rename(columns={"revenue": "Total Amount (â‚¬)"})
-        by_gateway["Total Amount (â‚¬)"] = by_gateway["Total Amount (â‚¬)"].map(format_eur)
+        by_gateway = by_gateway.rename(columns={"revenue": "Total Amount (€)"})
+        by_gateway["Total Amount (€)"] = by_gateway["Total Amount (€)"].map(format_eur)
         exports["by_payment_gateway.csv"] = by_gateway
 
     for name, table in exports.items():
@@ -557,7 +563,7 @@ def export_summary_tables(
             scale_y_override = None
             bbox_override = None
             header_font_size = 12
-            header_labels_override = ["", "tickets", "Total â‚¬"]
+            header_labels_override = ["", "tickets", "Total €"]
             row_height_override = 1.5
             header_height_override = 1.8
             manual_table = True
@@ -1280,14 +1286,14 @@ def main() -> None:
             index=["TOTAL"],
         )
         phase_table = pd.concat([phase_table, total_row])
-        phase_table = phase_table.rename(columns={"amount_eur": "Total Amount (â‚¬)"})
-        phase_table["Total Amount (â‚¬)"] = phase_table["Total Amount (â‚¬)"].map(format_eur)
+        phase_table = phase_table.rename(columns={"amount_eur": "Total Amount (€)"})
+        phase_table["Total Amount (€)"] = phase_table["Total Amount (€)"].map(format_eur)
         phase_path = output_dir / "phase_revenue_from_ticket_type.csv"
         phase_table.to_csv(phase_path, encoding="utf-8")
         print(f"\nRicavi per fase (da Ticket Type) salvati in: {phase_path}")
         save_table_image(phase_table, plots_dir, "table_phase_revenue_from_ticket_type", plot_format)
         if "TOTAL" in phase_table.index:
-            total_eur = phase_table.loc["TOTAL", "Total Amount (â‚¬)"]
+            total_eur = phase_table.loc["TOTAL", "Total Amount (€)"]
             print(f"Totale incassato (da Ticket Type): {total_eur}")
 
     # === Ambassador summary ==================================================
@@ -1451,7 +1457,7 @@ def main() -> None:
     # === Demografia (date di nascita) =========================================
     if dob_col in df.columns:
         dob_parsed_col = "BirthDate_parsed"
-        df[dob_parsed_col] = df[dob_col].map(parse_birth_date)
+        df[dob_parsed_col] = pd.to_datetime(df[dob_col].map(parse_birth_date), errors="coerce")
         dob_valid = df.dropna(subset=[dob_parsed_col]).copy()
         if dob_valid.empty:
             print("\nDate di nascita non disponibili o non parsabili.")
