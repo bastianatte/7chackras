@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Filter ticket CSV exports by keyword and emit a trimmed subset."""
 
 import argparse
@@ -118,11 +118,12 @@ def main() -> None:
     if not os.path.isfile(args.input):
         die(f"File di input non trovato: {args.input}")
 
-    normalized_keyword = normalize_identifier(args.ticket_keyword)
-    if not normalized_keyword:
-        die("La keyword non può essere vuota dopo la normalizzazione.")
+    keyword = args.ticket_keyword.strip()
+    if not keyword:
+        die("La keyword non può essere vuota.")
 
-    keyword_pattern = re.compile(re.escape(normalized_keyword))
+    # Match the keyword literally (including spaces), ignoring letter case only.
+    keyword_pattern = re.compile(re.escape(keyword), re.IGNORECASE)
 
     output_path = build_output_path(args.input, args.output)
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
@@ -144,7 +145,7 @@ def main() -> None:
                 value = row.get(ticket_column, "")
                 if value is None:
                     value = ""
-                if keyword_pattern.search(normalize_identifier(value)):
+                if keyword_pattern.search(value):
                     filtered_count += 1
                     writer.writerow(
                         [row.get(resolved_columns[col], "") for col in REQUIRED_COLUMNS]
@@ -158,3 +159,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

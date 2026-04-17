@@ -1,41 +1,30 @@
 {
-  "csv_path": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/Until_4Marz26_16_20.csv",
-  "output_dir": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/Until_4Marz26_16_20_Analysis",
-
+  "csv_path": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/2026_03Aprile_17_00_endPhase2.csv",
+  "output_dir": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/2026_03Aprile_17_00_endPhase2_Analysis_correct",
   "plots": {
     "enabled": true,
     "format": "png"
   },
   "timeline_markers": [
     {
-      "date": "2025-09-02",
-      "label": "psy lineup release",
-      "color": "#d81b60"
-    },
-    {
-      "date": "2025-11-23",
-      "label": "tekno lineup release",
-      "color": "#6a1b9a"
-    },
-    {
       "date": "2025-07-27",
       "label": "early bird",
-      "color": "#1e88e5"
+      "color": "#00897b"
     },
     {
-      "date": "2025-08-10",
+      "date": "2025-10-15",
       "label": "phase 0",
       "color": "#00897b"
     },
     {
-      "date": "2025-08-24",
+      "date": "2025-10-20",
       "label": "phase 1",
-      "color": "#fbc02d"
+      "color": "#00897b"
     },
     {
-      "date": "2026-02-01",
+      "date": "2026-02-03",
       "label": "phase 2",
-      "color": "#ff6f00"
+      "color": "#00897b"
     },
     {
       "date": "2026-02-13",
@@ -46,10 +35,23 @@
       "date": "2026-02-15",
       "label": "End Lovers Bundle",
       "color": "#ff6f00"
+    },
+    {
+      "date": "2026-04-03",
+      "label": "phase 3",
+      "color": "#00897b"
+    },
+    {
+      "label": "Start Christmas Bundle",
+      "date": "2025-12-10",
+      "color": "#ff6f00"
+    },
+    {
+      "label": "End Christmas Bundle",
+      "date": "2025-12-25",
+      "color": "#ff6f00"
     }
   ],
-
-
   "columns": {
     "event_name": "Event Name",
     "order_number": "Order Number",
@@ -100,5 +102,14 @@
     "Checked-in",
     "Check-ins",
     "Check-outs"
-  ]
+  ],
+  "focused_ticket_type_summary": {
+    "enabled": true,
+    "csv_subdir": "csv",
+    "plot_subdir": "plots",
+    "csv_name": "by_type_focused.csv",
+    "plot_name": "by_type_focused.png",
+    "show_total_subtitle": false,
+    "show_total_note": true
+  }
 }

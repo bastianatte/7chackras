@@ -13,6 +13,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import textwrap
 from typing import Dict, Iterable, List, Optional
 
 import numpy as np
@@ -23,6 +24,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402  (dipende dal backend impostato)
+from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 from datetime import datetime
 
@@ -34,6 +36,11 @@ READ_KWARGS: Dict[str, object] = {
     "dtype": str,
     "skip_blank_lines": True,
 }
+
+PHASE_MARKER_COLOR = "#00897b"
+LOVERS_BUNDLE_COLOR = "#ff6f00"
+CHRISTMAS_BUNDLE_KEYWORD = "christmas bundle"
+LINEUP_RELEASE_KEYWORD = "lineup release"
 
 NUMERIC_CANDIDATES = [
     "Order Total",
@@ -53,6 +60,22 @@ def load_config(path: Path) -> Dict[str, object]:
         raise FileNotFoundError(f"Config non trovato: {path}")
     with path.open(encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def json_default(value: object) -> object:
+    if isinstance(value, pd.Timestamp):
+        return value.strftime("%Y-%m-%d")
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except TypeError:
+            pass
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def save_config(path: Path, config: Dict[str, object]) -> None:
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(config, fh, ensure_ascii=False, indent=2, default=json_default)
 
 
 def normalize_columns(columns: Iterable[str]) -> List[str]:
@@ -172,7 +195,7 @@ def extract_ticket_type_amount(value: object) -> float:
     if value is None:
         return np.nan
     text = str(value)
-    match = re.search("(\d+(?:[.,]\d+)?)\s*(?:\u20ac|eur|\u0192'\u00aa)", text, flags=re.IGNORECASE)
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:\u20ac|eur|\u0192'\u00aa)", text, flags=re.IGNORECASE)
     if not match:
         return np.nan
     raw = match.group(1).replace(",", ".")
@@ -180,6 +203,138 @@ def extract_ticket_type_amount(value: object) -> float:
         return float(raw)
     except ValueError:
         return np.nan
+
+
+def normalize_phase_token(text: str) -> Optional[str]:
+    if not text:
+        return None
+    match = re.search(r"\bphase[\s_\-]*([a-z0-9]+)\b", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    token = match.group(1).strip()
+    if token.isdigit():
+        return f"PHASE {int(token)}"
+    return f"PHASE {token.upper()}"
+
+
+def focused_ticket_category(value: object) -> str:
+    if value is None:
+        return "UNKNOWN"
+    text = " ".join(str(value).strip().split())
+    if not text:
+        return "UNKNOWN"
+
+    lowered = text.lower()
+    phase_label = normalize_phase_token(lowered)
+    if phase_label:
+        year_match = re.search(r"\b(20\d{2})\b", text)
+        year_prefix = f"{year_match.group(1)} – " if year_match else ""
+        if "full festival" in lowered or "ambassador" in lowered:
+            return f"{year_prefix}FULL FESTIVAL – {phase_label}"
+        return f"{year_prefix}{phase_label}"
+
+    return text
+
+
+def build_focused_ticket_summary(df: pd.DataFrame, ticket_type_col: str) -> pd.DataFrame:
+    focused = df[ticket_type_col].fillna("").map(focused_ticket_category)
+    summary = (
+        focused.value_counts(dropna=False)
+        .rename_axis("ticket_category")
+        .reset_index(name="tickets")
+        .sort_values(["tickets", "ticket_category"], ascending=[True, True])
+        .reset_index(drop=True)
+    )
+    total_row = pd.DataFrame(
+        [{"ticket_category": "TOTAL", "tickets": int(summary["tickets"].sum())}]
+    )
+    summary = pd.concat([summary, total_row], ignore_index=True)
+    return summary
+
+
+def plot_focused_ticket_summary(
+    summary: pd.DataFrame,
+    plots_dir: Path,
+    plot_stem: str,
+    plot_format: str,
+    show_total_subtitle: bool = True,
+    show_total_note: bool = True,
+) -> None:
+    if summary.empty:
+        print("\nNessun dato disponibile per il grafico focused per Ticket Type.")
+        return
+
+    ordered = summary[summary["ticket_category"] != "TOTAL"].copy()
+    ordered = ordered.sort_values(["tickets", "ticket_category"], ascending=[True, True]).reset_index(drop=True)
+    total_tickets = int(ordered["tickets"].sum()) if not ordered.empty else 0
+    caravan_mask = ordered["ticket_category"].astype(str).str.contains("CARAVAN PASS", case=False, na=False)
+    caravan_tickets = int(ordered.loc[caravan_mask, "tickets"].sum()) if not ordered.empty else 0
+    person_only_tickets = total_tickets - caravan_tickets
+    height = max(4.5, 0.45 * len(ordered))
+    fig, ax = plt.subplots(figsize=(12, height))
+    ordered.plot(kind="barh", x="ticket_category", y="tickets", ax=ax, color="#1565c0", legend=False)
+    ax.set_xlabel("Tickets")
+    ax.set_ylabel("")
+    ax.set_title("Ticket categories focused by phase")
+    ax.grid(axis="x", alpha=0.25)
+    max_tickets = int(ordered["tickets"].max()) if not ordered.empty else 0
+    if max_tickets:
+        ax.set_xlim(0, max_tickets * 1.15)
+        ax.bar_label(ax.containers[0], padding=3, fmt="%.0f")
+    if show_total_note:
+        fig.text(
+            0.985,
+            0.02,
+            f"TOTAL = {total_tickets}\npeople_only = {person_only_tickets}",
+            ha="right",
+            va="bottom",
+            fontsize=13,
+            bbox={"facecolor": "white", "alpha": 0.88, "edgecolor": "#999999", "boxstyle": "round,pad=0.35"},
+        )
+
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    save_plot(fig, plots_dir, plot_stem, plot_format)
+
+
+def export_focused_ticket_summary(
+    df: pd.DataFrame,
+    ticket_type_col: Optional[str],
+    output_dir: Path,
+    plots_dir: Path,
+    plot_format: str,
+    focused_cfg: Dict[str, object],
+) -> None:
+    if not focused_cfg.get("enabled", True):
+        return
+    if not ticket_type_col or ticket_type_col not in df.columns:
+        return
+
+    csv_subdir = str(focused_cfg.get("csv_subdir", "csv") or "csv")
+    plot_subdir = str(focused_cfg.get("plot_subdir", "plots") or "plots")
+    csv_name = str(focused_cfg.get("csv_name", "by_type_focused.csv") or "by_type_focused.csv")
+    plot_name = str(focused_cfg.get("plot_name", "by_type_focused.png") or "by_type_focused.png")
+    show_total_subtitle = bool(focused_cfg.get("show_total_subtitle", True))
+    show_total_note = bool(focused_cfg.get("show_total_note", True))
+
+    csv_dir = output_dir / csv_subdir
+    plot_dir = output_dir / plot_subdir
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    summary = build_focused_ticket_summary(df, ticket_type_col)
+    csv_path = csv_dir / csv_name
+    summary.to_csv(csv_path, index=False, encoding="utf-8")
+    plot_stem = Path(plot_name).stem if plot_name else "by_type_focused"
+    plot_focused_ticket_summary(
+        summary,
+        plot_dir,
+        plot_stem,
+        plot_format,
+        show_total_subtitle=show_total_subtitle,
+        show_total_note=show_total_note,
+    )
+    print(f"\nRiepilogo focused salvato in: {csv_path}")
+    print(f"Grafico focused salvato in: {plot_dir / f'{plot_stem}.{plot_format}' }")
 
 
 def add_timeline_markers(ax: plt.Axes, markers: List[Dict[str, object]]) -> None:
@@ -198,8 +353,7 @@ def add_timeline_markers(ax: plt.Axes, markers: List[Dict[str, object]]) -> None
             label=marker["label"],
         )
         handles.append(line)
-    if handles:
-        ax.legend()
+    return handles
 
 
 def plot_sales_timelines(
@@ -209,24 +363,44 @@ def plot_sales_timelines(
     fmt: str,
 ) -> None:
     """Plot vendite giornaliere e cumulative con marker delle fasi."""
-    fig, ax = plt.subplots(figsize=(10, 4))
+    fig, ax = plt.subplots(figsize=(15, 6.2))
     daily_counts.plot(ax=ax, marker="o", color="#388e3c", label="Vendite")
     ax.set_title("Biglietti venduti per giorno")
     ax.set_xlabel("Data")
     ax.set_ylabel("Biglietti")
     ax.grid(True, alpha=0.3)
-    add_timeline_markers(ax, markers)
-    fig.tight_layout()
+    if not daily_counts.empty:
+        start = daily_counts.index.min() - pd.Timedelta(days=21)
+        end = daily_counts.index.max() + pd.Timedelta(days=21)
+        ax.set_xlim(start, end)
+    handles = add_timeline_markers(ax, markers)
+    if not daily_counts.empty:
+        daily_max = int(daily_counts.max())
+        ax.set_ylim(0, max(1, int(np.ceil(daily_max * 1.35))))
+        ax.yaxis.set_major_locator(MultipleLocator(5))
+    if handles:
+        ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0.0, fontsize=10)
+    fig.tight_layout(rect=[0, 0, 0.8, 1])
     save_plot(fig, plots_dir, "vendite_giornaliere", fmt)
 
-    fig, ax = plt.subplots(figsize=(10, 4))
-    daily_counts.cumsum().plot(ax=ax, marker="o", color="#d32f2f", label="Cumulato")
+    fig, ax = plt.subplots(figsize=(15, 6.2))
+    daily_counts.cumsum().plot(ax=ax, marker="o", markersize=3, color="#d32f2f", label="Cumulato")
     ax.set_title("Biglietti cumulati")
     ax.set_xlabel("Data")
     ax.set_ylabel("Cumulato")
     ax.grid(True, alpha=0.3)
-    add_timeline_markers(ax, markers)
-    fig.tight_layout()
+    if not daily_counts.empty:
+        start = daily_counts.index.min() - pd.Timedelta(days=21)
+        end = daily_counts.index.max() + pd.Timedelta(days=21)
+        ax.set_xlim(start, end)
+    handles = add_timeline_markers(ax, markers)
+    if not daily_counts.empty:
+        cumulative_max = int(daily_counts.cumsum().max())
+        ax.set_ylim(0, max(1, int(np.ceil(cumulative_max * 1.15))))
+        ax.yaxis.set_major_locator(MultipleLocator(50))
+    if handles:
+        ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0.0, fontsize=10)
+    fig.tight_layout(rect=[0, 0, 0.8, 1])
     save_plot(fig, plots_dir, "vendite_cumulative", fmt)
 
 
@@ -380,7 +554,7 @@ def export_summary_tables(
     ticket_type_col: Optional[str],
     ticket_total_num: Optional[str],
     payment_gateway_col: Optional[str],
-    output_dir: Path,
+    csv_dir: Path,
     plots_dir: Path,
     plot_format: str,
 ) -> None:
@@ -529,7 +703,7 @@ def export_summary_tables(
         exports["by_payment_gateway.csv"] = by_gateway
 
     for name, table in exports.items():
-        out_path = output_dir / name
+        out_path = csv_dir / name
         table.to_csv(out_path, encoding="utf-8")
         print(f"Esportato: {out_path}")
         widen_first = False
@@ -547,6 +721,7 @@ def export_summary_tables(
         header_labels_override = None
         row_height_override = None
         header_height_override = None
+        dpi_override = None
         if name == "by_type.csv":
             widen_first = True
             highlight = "TOTAL"
@@ -555,18 +730,19 @@ def export_summary_tables(
         if name == "ambassador_sales.csv":
             highlight = "TOTAL"
             narrow_numeric = True
-            font_size = 14
-            col_widths_override = [0.73, 0.11, 0.16]
-            fig_width_override = 6.0
-            fig_height_override = max(6.0, 0.7 * len(table))
+            font_size = 36
+            col_widths_override = [0.78, 0.10, 0.12]
+            fig_width_override = 13.5
+            fig_height_override = max(14.0, 1.4 * len(table))
             scale_x_override = None
             scale_y_override = None
             bbox_override = None
-            header_font_size = 12
+            header_font_size = 30
             header_labels_override = ["", "tickets", "Total €"]
-            row_height_override = 1.5
-            header_height_override = 1.8
+            row_height_override = 3.6
+            header_height_override = 4.0
             manual_table = True
+            dpi_override = 300
         if name == "by_payment_gateway.csv":
             highlight = "TOTAL"
         save_table_image(
@@ -589,6 +765,7 @@ def export_summary_tables(
             header_labels_override=header_labels_override,
             row_height_override=row_height_override,
             header_height_override=header_height_override,
+            dpi_override=dpi_override,
         )
 
 
@@ -676,6 +853,18 @@ def normalize_and_prepare_columns(
     else:
         df[PARSED_DATE_COL] = pd.NaT
 
+    if ticket_type_col and payment_date_col:
+        lovers_color = marker_color_by_label(parsed_timeline_markers, "lovers bundle", LOVERS_BUNDLE_COLOR)
+        parsed_timeline_markers.extend(
+            build_dynamic_bundle_markers(
+                df,
+                PARSED_DATE_COL,
+                ticket_type_col,
+                CHRISTMAS_BUNDLE_KEYWORD,
+                lovers_color,
+            )
+        )
+
     numeric_targets = set(NUMERIC_CANDIDATES)
     numeric_targets.update(
         [
@@ -751,11 +940,71 @@ def parse_timeline_markers(raw_markers: Iterable[object]) -> List[Dict[str, obje
         color = item.get("color") or "#ef6c00"
         if not label or not date_str:
             continue
+        label_lower = label.lower()
+        if LINEUP_RELEASE_KEYWORD in label_lower:
+            continue
+        if "early bird" in label_lower or "phase" in label_lower:
+            color = PHASE_MARKER_COLOR
+        elif "lovers bundle" in label_lower:
+            color = LOVERS_BUNDLE_COLOR
         ts = pd.to_datetime(date_str, errors="coerce")
         if pd.isna(ts):
             continue
         parsed.append({"label": label, "date": ts.normalize(), "color": color})
     return parsed
+
+
+def marker_color_by_label(markers: Iterable[Dict[str, object]], label_fragment: str, default: str) -> str:
+    fragment = label_fragment.lower()
+    for marker in markers:
+        label = str(marker.get("label", "")).lower()
+        if fragment in label:
+            return str(marker.get("color") or default)
+    return default
+
+
+def build_dynamic_bundle_markers(
+    df: pd.DataFrame,
+    date_col: str,
+    ticket_type_col: str,
+    keyword: str,
+    base_color: str,
+) -> List[Dict[str, object]]:
+    if date_col not in df.columns or ticket_type_col not in df.columns:
+        return []
+    mask = df[ticket_type_col].fillna("").astype(str).str.contains(keyword, case=False, na=False)
+    if not bool(mask.any()):
+        return []
+    dates = pd.to_datetime(df.loc[mask, date_col], errors="coerce").dropna()
+    if dates.empty:
+        return []
+    start = pd.Timestamp(dates.min()).normalize()
+    end = pd.Timestamp(dates.max()).normalize()
+    return [
+        {"label": "Start Christmas Bundle", "date": start.strftime("%Y-%m-%d"), "color": base_color},
+        {"label": "End Christmas Bundle", "date": end.strftime("%Y-%m-%d"), "color": base_color},
+    ]
+
+
+def sync_christmas_bundle_markers(
+    config: Dict[str, object],
+    config_path: Path,
+    christmas_markers: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    raw_markers = list(config.get("timeline_markers", []) or [])
+    filtered = []
+    for item in raw_markers:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label", "")).strip().lower()
+        if label in {"start christmas bundle", "end christmas bundle"}:
+            continue
+        filtered.append(item)
+
+    updated_markers = filtered + christmas_markers
+    config["timeline_markers"] = updated_markers
+    save_config(config_path, config)
+    return updated_markers
 
 
 def write_missing_report(
@@ -832,6 +1081,617 @@ def save_plot(fig: plt.Figure, destination: Path, name: str, fmt: str) -> None:
     plt.close(fig)
 
 
+def normalize_marker_label(label: object) -> str:
+    normalized = str(label or "").lower()
+    normalized = normalized.replace("\u2013", "-").replace("\u2014", "-")
+    normalized = " ".join(normalized.split())
+    return normalized
+
+
+def is_phase_timeline_marker(label: object) -> bool:
+    normalized = normalize_marker_label(label)
+    return bool(re.fullmatch(r"(early bird|phase\s*[0-9]+|phase final)", normalized))
+
+
+def timeline_marker_to_bucket(label: object) -> str:
+    normalized = normalize_marker_label(label)
+    if normalized == "early bird":
+        return "early_bird"
+    match = re.fullmatch(r"phase\s*([0-9]+|final)", normalized)
+    if match:
+        return f"phase_{match.group(1)}"
+    return normalized.replace(" ", "_")
+
+
+def build_phase_window_summary(
+    df: pd.DataFrame,
+    timeline_markers: List[Dict[str, object]],
+    ticket_type_col: Optional[str],
+    ticket_total_num: Optional[str],
+) -> pd.DataFrame:
+    if not ticket_type_col or ticket_type_col not in df.columns:
+        return pd.DataFrame()
+
+    phase_markers: List[Dict[str, object]] = []
+    for marker in timeline_markers:
+        if not isinstance(marker, dict):
+            continue
+        if is_phase_timeline_marker(marker.get("label")):
+            ts = pd.to_datetime(marker.get("date"), errors="coerce")
+            if pd.notna(ts):
+                phase_markers.append({"label": marker.get("label"), "date": ts.normalize()})
+    phase_markers.sort(key=lambda item: item["date"])
+
+    phase_labels = df[ticket_type_col].fillna("").map(extract_phase_label)
+    rows: List[Dict[str, object]] = []
+    for idx, marker in enumerate(phase_markers):
+        label = normalize_marker_label(marker["label"])
+        bucket = timeline_marker_to_bucket(label)
+        start = marker["date"]
+        end = phase_markers[idx + 1]["date"] if idx + 1 < len(phase_markers) else pd.NaT
+        mask = phase_labels.eq(bucket)
+        tickets = int(mask.sum())
+        revenue = (
+            float(df.loc[mask, ticket_total_num].sum())
+            if ticket_total_num and ticket_total_num in df.columns
+            else np.nan
+        )
+        span_days = int((end - start).days) if pd.notna(end) else np.nan
+        tickets_per_day = float(tickets / span_days) if pd.notna(span_days) and span_days > 0 else np.nan
+        rows.append(
+            {
+                "phase": bucket,
+                "start": start.strftime("%d/%m/%Y"),
+                "end": end.strftime("%d/%m/%Y") if pd.notna(end) else "ongoing",
+                "span_days": span_days,
+                "tickets": tickets,
+                "tickets/day": tickets_per_day,
+                "revenue": revenue,
+            }
+        )
+
+    phase_df = pd.DataFrame(rows)
+    if phase_df.empty:
+        return phase_df
+    phase_df["revenue"] = phase_df["revenue"].map(format_eur)
+    phase_df["tickets/day"] = phase_df["tickets/day"].map(lambda v: "" if pd.isna(v) else f"{v:.2f}")
+    phase_df["span_days"] = phase_df["span_days"].map(lambda v: "" if pd.isna(v) else int(v))
+    return phase_df
+
+
+def build_bundle_summary(
+    df: pd.DataFrame,
+    timeline_markers: List[Dict[str, object]],
+    ticket_type_col: Optional[str],
+    ticket_total_num: Optional[str],
+) -> pd.DataFrame:
+    if not ticket_type_col or ticket_type_col not in df.columns:
+        return pd.DataFrame()
+
+    marker_map = {
+        normalize_marker_label(marker.get("label")): pd.to_datetime(marker.get("date"), errors="coerce")
+        for marker in timeline_markers
+        if isinstance(marker, dict) and pd.notna(pd.to_datetime(marker.get("date"), errors="coerce"))
+    }
+    bundle_defs = [
+        ("start christmas bundle", "end christmas bundle", "christmas bundle"),
+        ("start lovers bundle", "end lovers bundle", "lovers bundle"),
+    ]
+    rows: List[Dict[str, object]] = []
+    text_series = df[ticket_type_col].fillna("").astype(str).str.lower()
+    for start_key, end_key, bucket_name in bundle_defs:
+        start = marker_map.get(start_key)
+        end = marker_map.get(end_key)
+        if pd.isna(start) or pd.isna(end):
+            continue
+        mask = text_series.str.contains(bucket_name, case=False, na=False)
+        tickets = int(mask.sum())
+        revenue = (
+            float(df.loc[mask, ticket_total_num].sum())
+            if ticket_total_num and ticket_total_num in df.columns
+            else np.nan
+        )
+        span_days = max(1, int((end - start).days) + 1)
+        rows.append(
+            {
+                "bundle": bucket_name,
+                "start": start.strftime("%d/%m/%Y"),
+                "end": end.strftime("%d/%m/%Y"),
+                "span_days": span_days,
+                "tickets": tickets,
+                "tickets/day": float(tickets / span_days) if span_days else np.nan,
+                "revenue": revenue,
+            }
+        )
+    bundle_df = pd.DataFrame(rows)
+    if bundle_df.empty:
+        return bundle_df
+    bundle_df["revenue"] = bundle_df["revenue"].map(format_eur)
+    bundle_df["tickets/day"] = bundle_df["tickets/day"].map(lambda v: "" if pd.isna(v) else f"{v:.2f}")
+    return bundle_df
+
+
+def render_pdf_text_page(
+    pdf: PdfPages,
+    title: str,
+    paragraphs: List[str],
+    bullets: Optional[List[str]] = None,
+    footer: Optional[str] = None,
+    figsize: tuple[float, float] = (11.69, 8.27),
+) -> None:
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.axis("off")
+    ax.text(0.05, 0.96, title, fontsize=20, fontweight="bold", va="top")
+
+    y = 0.90
+    for paragraph in paragraphs:
+        wrapped = textwrap.fill(paragraph, width=115)
+        ax.text(0.05, y, wrapped, fontsize=11.5, va="top")
+        y -= 0.075 * max(1, wrapped.count("\n") + 1)
+        y -= 0.02
+
+    if bullets:
+        y -= 0.01
+        for bullet in bullets:
+            wrapped = textwrap.fill(f"- {bullet}", width=113, subsequent_indent="  ")
+            ax.text(0.06, y, wrapped, fontsize=11.5, va="top")
+            y -= 0.075 * max(1, wrapped.count("\n") + 1)
+
+    if footer:
+        ax.text(0.05, 0.03, footer, fontsize=9.5, color="#555555", va="bottom")
+
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def render_pdf_table_page(
+    pdf: PdfPages,
+    title: str,
+    table_df: pd.DataFrame,
+    note: Optional[str] = None,
+    figsize: tuple[float, float] = (11.69, 8.27),
+    font_size: int = 9,
+) -> None:
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.axis("off")
+    ax.set_title(title, fontsize=18, fontweight="bold", pad=18)
+    if table_df.empty:
+        ax.text(0.05, 0.5, "Nessun dato disponibile.", fontsize=12)
+    else:
+        table = ax.table(
+            cellText=table_df.values,
+            colLabels=table_df.columns,
+            loc="center",
+            cellLoc="center",
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(font_size)
+        table.scale(1.0, 1.35)
+        for (r, c), cell in table.get_celld().items():
+            cell.set_edgecolor("#333333")
+            cell.set_linewidth(0.6)
+            if r == 0:
+                cell.set_facecolor("#f3f3f3")
+                cell.set_text_props(weight="bold")
+            elif c == 0:
+                cell.set_text_props(ha="left")
+    if note:
+        ax.text(0.02, 0.03, note, fontsize=9.5, color="#555555", va="bottom")
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def render_pdf_image_page(
+    pdf: PdfPages,
+    title: str,
+    image_path: Path,
+    note: Optional[str] = None,
+    figsize: tuple[float, float] = (11.69, 8.27),
+) -> None:
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.axis("off")
+    ax.set_title(title, fontsize=18, fontweight="bold", pad=18)
+    if image_path.exists():
+        img = plt.imread(image_path)
+        ax.imshow(img)
+    else:
+        ax.text(0.5, 0.5, f"Immagine non trovata:\n{image_path}", ha="center", va="center", fontsize=12)
+    if note:
+        ax.text(0.02, 0.03, note, fontsize=9.5, color="#555555", va="bottom")
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def export_detailed_pdf_report(
+    output_dir: Path,
+    csv_path: Path,
+    df_raw: pd.DataFrame,
+    df: pd.DataFrame,
+    csv_dir: Path,
+    plots_dir: Path,
+    timeline_markers: List[Dict[str, object]],
+    ticket_type_col: Optional[str],
+    ticket_total_num: Optional[str],
+    order_total_num: Optional[str],
+    order_status_col: Optional[str],
+    country_col: Optional[str],
+    city_col: Optional[str],
+    dob_col: Optional[str],
+    order_status_counts: Optional[pd.Series],
+    by_type: Optional[pd.DataFrame],
+    phase_table: Optional[pd.DataFrame],
+    amb_table: Optional[pd.DataFrame],
+) -> None:
+    pdf_dir = output_dir / "pdf"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = pdf_dir / f"{slugify(csv_path.stem)}_detailed_report.pdf"
+
+    total_rows_raw = len(df_raw)
+    total_rows = len(df)
+    ticket_sum = float(df[ticket_total_num].sum()) if ticket_total_num and ticket_total_num in df.columns else np.nan
+    order_sum = float(df[order_total_num].sum()) if order_total_num and order_total_num in df.columns else np.nan
+    date_min = df[PARSED_DATE_COL].min() if PARSED_DATE_COL in df.columns else pd.NaT
+    date_max = df[PARSED_DATE_COL].max() if PARSED_DATE_COL in df.columns else pd.NaT
+
+    phase_summary = build_phase_window_summary(df, timeline_markers, ticket_type_col, ticket_total_num)
+    bundle_summary = build_bundle_summary(df, timeline_markers, ticket_type_col, ticket_total_num)
+
+    phase1_amb_share = np.nan
+    phase2_amb_share = np.nan
+    if amb_table is not None and not amb_table.empty and phase_table is not None and not phase_table.empty:
+        amb_body = amb_table.drop(index="TOTAL", errors="ignore").copy()
+        phase1_cols = [c for c in amb_body.columns if "phase_1" in str(c).lower()]
+        phase2_cols = [c for c in amb_body.columns if "phase_2" in str(c).lower()]
+        if phase1_cols:
+            phase1_total = int(phase_table.loc["phase_1", "tickets"]) if "phase_1" in phase_table.index else np.nan
+            phase1_amb = pd.to_numeric(amb_body[phase1_cols].stack(), errors="coerce").sum()
+            phase1_amb_share = (phase1_amb / phase1_total * 100) if phase1_total else np.nan
+        if phase2_cols:
+            phase2_total = int(phase_table.loc["phase_2", "tickets"]) if "phase_2" in phase_table.index else np.nan
+            phase2_amb = pd.to_numeric(amb_body[phase2_cols].stack(), errors="coerce").sum()
+            phase2_amb_share = (phase2_amb / phase2_total * 100) if phase2_total else np.nan
+
+    with PdfPages(pdf_path) as pdf:
+        render_pdf_text_page(
+            pdf,
+            "7 Chakras EDA - Detailed Report",
+            paragraphs=[
+                f"Source CSV: {csv_path}",
+                f"Rows in raw CSV: {total_rows_raw:,}. Rows analyzed after quality filter: {total_rows:,}.",
+                f"Ticket total (sum of Ticket Total): {ticket_sum:,.2f}." if pd.notna(ticket_sum) else "Ticket total not available.",
+                f"Order total (sum of Order Total): {order_sum:,.2f}." if pd.notna(order_sum) else "Order total not available.",
+                f"Payment dates span from {date_min.strftime('%d/%m/%Y') if pd.notna(date_min) else 'n/a'} to {date_max.strftime('%d/%m/%Y') if pd.notna(date_max) else 'n/a'}.",
+            ],
+            bullets=[
+                "Early bird and phase 0 should be treated as launch / pre-lineup windows, not as the core benchmark for the commercial engine.",
+                "Phase 1 and phase 2 sell the same volume, but phase 2 does it over a much shorter span, so the sales pace is stronger rather than flatter.",
+                "Ambassador contribution rises from phase 1 to phase 2, which suggests the ambassador channel becomes more important as the pricing ladder advances.",
+                "Christmas and Lovers bundles behave as tactical bursts: they are short windows with concentrated demand, not recurring structural phases.",
+                "The current config already contains a phase-3 marker, but the CSV does not yet show a meaningful phase-3 ticket family, so that stage is still early.",
+            ],
+            footer="Generated by ticket_eda.py",
+        )
+
+        if order_status_counts is not None and not order_status_counts.empty:
+            status_df = order_status_counts.rename_axis("status").reset_index(name="tickets").head(12)
+            render_pdf_table_page(
+                pdf,
+                "Data Quality and Order Status",
+                status_df,
+                note="Top order-status counts from the full dataset. Useful as a quality gate before reading the commercial performance.",
+                figsize=(11.69, 8.27),
+                font_size=10,
+            )
+
+        if phase_summary is not None and not phase_summary.empty:
+            render_pdf_table_page(
+                pdf,
+                "Phase Windows and Sales Density",
+                phase_summary.rename(columns={"tickets/day": "tickets/day"}),
+                note="Phase windows are computed from the timeline markers in the config. The phase duration is the distance between consecutive phase starts; bundles use the first/last sold ticket dates saved in the same config.",
+                figsize=(11.69, 8.27),
+                font_size=9,
+            )
+
+        if bundle_summary is not None and not bundle_summary.empty:
+            render_pdf_table_page(
+                pdf,
+                "Bundle Windows",
+                bundle_summary.rename(columns={"tickets/day": "tickets/day"}),
+                note="These are tactical bursts with a short duration and high density. The start and end dates are persisted in the config, so they remain stable across runs.",
+                figsize=(11.69, 8.27),
+                font_size=10,
+            )
+
+        if by_type is not None and not by_type.empty:
+            top_types = by_type.head(15).reset_index().rename(columns={"index": "ticket_type"})
+            render_pdf_table_page(
+                pdf,
+                "Top Ticket Types by Volume",
+                top_types.head(15),
+                note="The distribution is concentrated: a few ticket families account for most of the volume, while the rest form a long tail.",
+                figsize=(11.69, 8.27),
+                font_size=8,
+            )
+
+        if amb_table is not None and not amb_table.empty:
+            amb_pdf = amb_table.drop(index="TOTAL", errors="ignore").copy()
+            if not amb_pdf.empty:
+                amb_pdf = amb_pdf.reset_index().rename(columns={"index": "ambassador"})
+                keep_cols = [c for c in amb_pdf.columns if c == "ambassador" or c == "tickets_total" or c == "Total Amount (€)" or "phase_" in str(c).lower()]
+                amb_pdf = amb_pdf[keep_cols].head(12)
+                note = (
+                    f"Ambassador share: phase 1 = {phase1_amb_share:.1f}% of phase-1 tickets; "
+                    f"phase 2 = {phase2_amb_share:.1f}% of phase-2 tickets."
+                    if pd.notna(phase1_amb_share) and pd.notna(phase2_amb_share)
+                    else "Ambassador sales are concentrated in a small subset of profiles, with a long tail of low-volume contributors."
+                )
+                render_pdf_table_page(
+                    pdf,
+                    "Ambassador Sales - Top Contributors",
+                    amb_pdf,
+                    note=note,
+                    figsize=(11.69, 8.27),
+                    font_size=8,
+                )
+
+        render_pdf_image_page(
+            pdf,
+            "Sales Timeline - Daily",
+            plots_dir / "vendite_giornaliere.png",
+            note="Daily sales with the configured phase markers.",
+            figsize=(11.69, 8.27),
+        )
+        render_pdf_image_page(
+            pdf,
+            "Sales Timeline - Cumulative",
+            plots_dir / "vendite_cumulative.png",
+            note="Cumulative sales with the same markers and a denser y-axis.",
+            figsize=(11.69, 8.27),
+        )
+        render_pdf_image_page(
+            pdf,
+            "Ticket Type Concentration",
+            plots_dir / "by_type_focused.png",
+            note="The focused bar chart groups phase variants and keeps a stable relative scale across its separate PNGs.",
+            figsize=(11.69, 8.27),
+        )
+
+    print(f"\nPDF dettagliato salvato in: {pdf_path}")
+
+
+def export_narrative_pdf_report(
+    output_dir: Path,
+    csv_path: Path,
+    df_raw: pd.DataFrame,
+    df: pd.DataFrame,
+    timeline_markers: List[Dict[str, object]],
+    ticket_type_col: Optional[str],
+    ticket_total_num: Optional[str],
+    order_total_num: Optional[str],
+    order_status_counts: Optional[pd.Series],
+    by_type: Optional[pd.DataFrame],
+    phase_table: Optional[pd.DataFrame],
+    amb_table: Optional[pd.DataFrame],
+) -> None:
+    pdf_dir = output_dir / "pdf"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    stem = slugify(csv_path.stem)
+    pdf_path = pdf_dir / f"{stem}_conclusioni_narrative.pdf"
+    txt_path = pdf_dir / f"{stem}_conclusioni_narrative.txt"
+
+    total_rows_raw = len(df_raw)
+    total_rows = len(df)
+    ticket_sum = float(df[ticket_total_num].sum()) if ticket_total_num and ticket_total_num in df.columns else np.nan
+    order_sum = float(df[order_total_num].sum()) if order_total_num and order_total_num in df.columns else np.nan
+    date_min = df[PARSED_DATE_COL].min() if PARSED_DATE_COL in df.columns else pd.NaT
+    date_max = df[PARSED_DATE_COL].max() if PARSED_DATE_COL in df.columns else pd.NaT
+
+    phase_summary = build_phase_window_summary(df, timeline_markers, ticket_type_col, ticket_total_num)
+    bundle_summary = build_bundle_summary(df, timeline_markers, ticket_type_col, ticket_total_num)
+
+    phase1_tickets = int(phase_summary.loc[phase_summary["phase"] == "phase_1", "tickets"].sum()) if not phase_summary.empty and "phase_1" in set(phase_summary.get("phase", [])) else 0
+    phase2_tickets = int(phase_summary.loc[phase_summary["phase"] == "phase_2", "tickets"].sum()) if not phase_summary.empty and "phase_2" in set(phase_summary.get("phase", [])) else 0
+    phase1_rate = float(phase_summary.loc[phase_summary["phase"] == "phase_1", "tickets/day"].astype(float).iloc[0]) if not phase_summary.empty and "phase_1" in set(phase_summary.get("phase", [])) else np.nan
+    phase2_rate = float(phase_summary.loc[phase_summary["phase"] == "phase_2", "tickets/day"].astype(float).iloc[0]) if not phase_summary.empty and "phase_2" in set(phase_summary.get("phase", [])) else np.nan
+
+    ambassador_share_phase1 = np.nan
+    ambassador_share_phase2 = np.nan
+    if amb_table is not None and not amb_table.empty and phase_table is not None and not phase_table.empty:
+        amb_body = amb_table.drop(index="TOTAL", errors="ignore").copy()
+        phase1_cols = [c for c in amb_body.columns if "phase_1" in str(c).lower()]
+        phase2_cols = [c for c in amb_body.columns if "phase_2" in str(c).lower()]
+        if phase1_cols and "phase_1" in phase_table.index:
+            ambassador_share_phase1 = pd.to_numeric(amb_body[phase1_cols].stack(), errors="coerce").sum() / float(phase_table.loc["phase_1", "tickets"]) * 100
+        if phase2_cols and "phase_2" in phase_table.index:
+            ambassador_share_phase2 = pd.to_numeric(amb_body[phase2_cols].stack(), errors="coerce").sum() / float(phase_table.loc["phase_2", "tickets"]) * 100
+
+    ticket_categories = int(len(by_type.drop(index="TOTAL", errors="ignore"))) if by_type is not None and not by_type.empty else 0
+    amb_total = int(amb_table.loc["TOTAL", "tickets_total"]) if amb_table is not None and not amb_table.empty and "TOTAL" in amb_table.index else np.nan
+
+    phase1_count = int(phase_summary.loc[phase_summary["phase"] == "phase_1", "tickets"].iloc[0]) if not phase_summary.empty and "phase_1" in set(phase_summary.get("phase", [])) else 0
+    phase2_count = int(phase_summary.loc[phase_summary["phase"] == "phase_2", "tickets"].iloc[0]) if not phase_summary.empty and "phase_2" in set(phase_summary.get("phase", [])) else 0
+    early_count = int(phase_summary.loc[phase_summary["phase"] == "early_bird", "tickets"].iloc[0]) if not phase_summary.empty and "early_bird" in set(phase_summary.get("phase", [])) else 0
+
+    lines: List[str] = []
+    lines.append("Conclusioni narrative - 7 Chakras EDA")
+    lines.append("")
+    lines.append(
+        f"Questa analisi parte dal file {csv_path.name} e si chiude con {total_rows:,} ticket analizzati su {total_rows_raw:,} ticket grezzi. Il quadro economico finale non è banale: la somma del Ticket Total è pari a {ticket_sum:,.2f}, mentre la somma dell'Order Total arriva a {order_sum:,.2f}. Le due metriche sono entrambe utili, ma raccontano aspetti diversi del flusso: il Ticket Total misura ciò che entra dal singolo ticket, mentre l'Order Total fotografa il movimento più ampio che passa dal checkout."
+    )
+    lines.append(
+        f"La timeline dei pagamenti va dal {date_min.strftime('%d/%m/%Y') if pd.notna(date_min) else 'n/d'} al {date_max.strftime('%d/%m/%Y') if pd.notna(date_max) else 'n/d'}. Dentro questa finestra la lettura corretta non è quella di un mercato piatto, ma quella di una curva che si apre, si consolida e poi accelera quando le fasi vengono lette nella loro sequenza reale."
+    )
+    lines.append("")
+    lines.append("Punti chiave")
+    lines.append(f"- Early bird: {early_count:,} ticket. È una fase di lancio e va letta come un test della domanda iniziale, non come il benchmark principale della maturità commerciale.")
+    lines.append("- Phase 0: resta una finestra pre-lineup molto corta. Qui il nome del festival lavora quasi da solo, quindi il dato serve più a misurare la forza del brand che la tenuta del piano artistico.")
+    lines.append(
+        f"- Phase 1 e Phase 2: sono il vero punto di confronto. Phase 1 chiude a {phase1_count:,} ticket, mentre Phase 2 arriva allo stesso volume, {phase2_count:,} ticket, ma lo fa con un ritmo giornaliero più alto. Questa è la parte più importante della lettura: la curva non si sta appiattendo, si sta densificando."
+    )
+    lines.append(
+        f"- Ambassador: il canale non è più un dettaglio. In phase 1 pesa circa {ambassador_share_phase1:.1f}% del volume di fase, e in phase 2 sale a circa {ambassador_share_phase2:.1f}%. Questo significa che la distribuzione sta diventando una leva strutturale, non solo un supporto laterale."
+    )
+    lines.append(
+        "- Bundle: Christmas Bundle e Lovers Bundle sono picchi tattici, non fasi strutturali. La loro logica è quella del burst commerciale: pochi giorni, molta densità, impatto immediato."
+    )
+    lines.append("")
+    lines.append("Lettura estesa")
+    lines.append(
+        f"Il ticket type count mostra una distribuzione molto sbilanciata: {ticket_categories} categorie effettive e una coda lunga di tipi con peso marginale. Questo è coerente con un modello in cui poche famiglie di ticket trainano la maggior parte del volume, mentre il resto del catalogo si frammenta in segmenti più piccoli."
+    )
+    lines.append(
+        f"La parte ambassador è ancora più istruttiva: nella tabella complessiva compaiono {amb_total:,} ticket ambassador esclusa la riga TOTAL, quindi il canale ha ormai un peso reale sul totale e non può più essere letto come una semplice appendice."
+    )
+    lines.append(
+        "Il passaggio da phase 1 a phase 2 è il segnale più forte dell'intero run: il volume complessivo non cambia, ma il tempo necessario per generarlo si riduce. In altre parole, il mercato non si sta esaurendo, sta diventando più veloce."
+    )
+    lines.append(
+        "La phase 3 è già presente come marker, quindi la struttura del progetto è pronta per il passo successivo. Però, nel CSV attuale, quella fase non ha ancora massa sufficiente per diventare un riferimento analitico vero e proprio."
+    )
+    lines.append("")
+    lines.append("Conclusione finale")
+    lines.append(
+        "La lettura complessiva è positiva: il progetto non mostra segni di appiattimento, ma un passaggio progressivo verso una vendita più densa e più organizzata. Le fasi centrali restano il cuore del modello, gli ambassador stanno crescendo come canale e i bundle funzionano come acceleratori tattici."
+    )
+    lines.append(
+        "Per il prossimo run, il punto non sarà solo quante vendite arrivano, ma dove si concentrano e con quale intensità giornaliera. È questa la metrica che rende davvero confrontabili le fasi e permette di capire se il festival sta reggendo la pressione del pricing ladder."
+    )
+    txt_path.write_text("\n".join(lines), encoding="utf-8")
+
+    with PdfPages(pdf_path) as pdf:
+        render_pdf_text_page(
+            pdf,
+            "7 Chakras EDA - Conclusioni narrative",
+            paragraphs=[
+                f"Questa analisi parte dal file {csv_path.name} e si chiude con {total_rows:,} ticket analizzati su {total_rows_raw:,} ticket grezzi. Il quadro economico finale non è banale: la somma del Ticket Total è pari a {ticket_sum:,.2f}, mentre la somma dell'Order Total arriva a {order_sum:,.2f}. Le due metriche sono entrambe utili, ma raccontano aspetti diversi del flusso: il Ticket Total misura ciò che entra dal singolo ticket, mentre l'Order Total fotografa il movimento più ampio che passa dal checkout.",
+                f"La timeline dei pagamenti va dal {date_min.strftime('%d/%m/%Y') if pd.notna(date_min) else 'n/d'} al {date_max.strftime('%d/%m/%Y') if pd.notna(date_max) else 'n/d'}. Dentro questa finestra la lettura corretta non è quella di un mercato piatto, ma quella di una curva che si apre, si consolida e poi accelera quando le fasi vengono lette nella loro sequenza reale.",
+            ],
+            bullets=[
+                f"Early bird: {early_count:,} ticket. È una fase di lancio e va letta come un test della domanda iniziale, non come il benchmark principale della maturità commerciale.",
+                "- Phase 0: resta una finestra pre-lineup molto corta. Qui il nome del festival lavora quasi da solo, quindi il dato serve più a misurare la forza del brand che la tenuta del piano artistico.",
+                f"Phase 1 e Phase 2: sono il vero punto di confronto. Phase 1 chiude a {phase1_count:,} ticket, mentre Phase 2 arriva allo stesso volume, {phase2_count:,} ticket, ma lo fa con un ritmo giornaliero più alto. Questa è la parte più importante della lettura: la curva non si sta appiattendo, si sta densificando.",
+                f"Ambassador: il canale non è più un dettaglio. In phase 1 pesa circa {ambassador_share_phase1:.1f}% del volume di fase, e in phase 2 sale a circa {ambassador_share_phase2:.1f}%. Questo significa che la distribuzione sta diventando una leva strutturale, non solo un supporto laterale.",
+                "- Bundle: Christmas Bundle e Lovers Bundle sono picchi tattici, non fasi strutturali. La loro logica è quella del burst commerciale: pochi giorni, molta densità, impatto immediato.",
+            ],
+            footer="Conseguenze narrative generate automaticamente dal run corrente.",
+            figsize=(11.69, 8.27),
+        )
+
+        render_pdf_text_page(
+            pdf,
+            "Lettura delle fasi",
+            paragraphs=[
+                "Il modo più utile per leggere le fasi è smettere di guardare soltanto i totali e cominciare a guardare il ritmo giornaliero. Una fase che vende meno ticket ma in meno tempo può essere più forte di una fase lunga con lo stesso volume, perché mostra che la domanda continua a reagire anche quando il pricing ladder sale.",
+                "È esattamente per questo che phase 2 conta così tanto. Se phase 1 e phase 2 chiudono con lo stesso numero di ticket, ma phase 2 comprime quel volume in meno giorni, la lettura commerciale è positiva: il mercato non è stanco, si sta muovendo più velocemente.",
+            ],
+            bullets=[
+                "Early bird e phase 0 vanno trattate come finestre di lancio, non come KPI principale della salute commerciale.",
+                f"Phase 1 si muove intorno a {phase1_rate:.2f} ticket/giorno, quindi è il primo vero test della capacità del prodotto di continuare a vendere quando l'impulso iniziale si attenua.",
+                f"Phase 2 sale a {phase2_rate:.2f} ticket/giorno, che è il segnale più forte dell'intera ladder perché mostra che il mercato non si è raffreddato: si è compattato.",
+                "La presenza del marker di phase 3 indica che la struttura è già pronta per il passo successivo, ma il CSV attuale appartiene ancora all'era di phase 2, quindi qualsiasi lettura su phase 3 va mantenuta prudente.",
+            ],
+            footer="Il modello delle fasi va letto come modello di ritmo, non solo come modello di prezzo.",
+            figsize=(11.69, 8.27),
+        )
+
+        render_pdf_text_page(
+            pdf,
+            "Lettura dei canali",
+            paragraphs=[
+                f"Il mix dei ticket è abbastanza ampio da mostrare che la crescita non arriva da una sola leva. Nel run corrente ci sono {ticket_categories} categorie effettive nel focused breakdown, e la coda lunga è reale. Poche categorie portano gran parte del volume, mentre il resto si distribuisce in tasche più piccole e più tattiche.",
+                f"La performance ambassador merita un'attenzione specifica perché la tabella ambassador contiene {amb_total:,} ticket totali se escludiamo la riga TOTAL finale. Non è più un canale marginale: è una vera layer di distribuzione.",
+            ],
+            bullets=[
+                "Il canale ambassador è concentrato: un gruppo più piccolo di profili fa la maggior parte del lavoro, cosa tipica di una rete che si sta maturando ma non si è ancora livellata del tutto.",
+                "Il canale bundle è bursty per costruzione. Non è un difetto: è una forma commerciale utile perché permette di creare momenti di vendita brevi e ad alta intensità.",
+                "Le pagine su geografia e gateway nel report tecnico suggeriscono che il processo di acquisto è abbastanza stabile da sostenere questi pattern; quindi la domanda non è più se la gente può comprare, ma dove conviene spingere meglio l'incremento.",
+            ],
+            footer="Questa sezione è volutamente descrittiva, così può essere portata direttamente in una slide narrativa.",
+            figsize=(11.69, 8.27),
+        )
+
+        render_pdf_text_page(
+            pdf,
+            "Conclusioni aperte",
+            paragraphs=[
+                "La conclusione generale è che la campagna è ancora viva e strutturata. Non si sta distribuendo in modo uniforme in un modo che farebbe pensare a una domanda debole; si sta invece concentrando nei punti in cui prodotto, pricing ladder e canali di distribuzione si allineano meglio.",
+            ],
+            bullets=[
+                "Le fasi di lancio confermano una domanda iniziale reale.",
+                "Le fasi centrali confermano che il festival riesce a continuare a vendere dopo la prima ondata.",
+                "La dinamica delle fasi più avanzate parla di accelerazione, non di stanchezza.",
+                "Ambassador e bundle stanno diventando leve strategiche, non semplici supporti accessori.",
+                "Il prossimo run andrà letto sulle stesse finestre di fase, così il trend resterà confrontabile nel tempo.",
+            ],
+            footer="Se phase 3 comincerà ad accumulare ticket, questo stesso impianto narrativo potrà essere riutilizzato senza cambiare la logica.",
+            figsize=(11.69, 8.27),
+        )
+
+    print(f"\nPDF narrativo salvato in: {pdf_path}")
+    print(f"TXT narrativo salvato in: {txt_path}")
+
+
+def save_chunked_barh_plot(
+    df: pd.DataFrame,
+    destination: Path,
+    name: str,
+    fmt: str,
+    chunk_size: int = 15,
+    fig_width: float = 14.0,
+    base_height: float = 5.4,
+    row_height_scale: float = 0.42,
+    label_font_size: int = 12,
+    title_font_size: int = 16,
+    dpi_override: Optional[int] = None,
+) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    if df.empty:
+        return
+
+    ordered = df.reset_index()
+    if ordered.columns[0] == "index":
+        ordered = ordered.rename(columns={"index": "ticket_type"})
+    label_col = ordered.columns[0]
+    ordered = ordered.sort_values(["tickets", label_col], ascending=[False, True]).reset_index(drop=True)
+    chunks = [ordered.iloc[i : i + chunk_size].copy() for i in range(0, len(ordered), chunk_size)]
+    fixed_x_max = 0.0
+    if chunks:
+        first_chunk = chunks[0]
+        if not first_chunk.empty:
+            fixed_x_max = float(first_chunk["tickets"].max()) * 1.15
+
+    for idx, chunk in enumerate(chunks, start=1):
+        if chunk.empty:
+            continue
+
+        plot_df = chunk.sort_values(["tickets", label_col], ascending=[True, True]).copy()
+        labels = plot_df[label_col].astype(str)
+        values = plot_df["tickets"].astype(float)
+        fig_height = max(base_height, row_height_scale * len(plot_df) + 1.8)
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        ax.barh(labels, values, color="#1976d2", height=0.82)
+        ax.set_title(f"Conteggio biglietti per tipo - blocco {idx}", fontsize=title_font_size)
+        ax.set_xlabel("Biglietti")
+        ax.set_ylabel("")
+        ax.tick_params(axis="both", labelsize=label_font_size)
+        ax.xaxis.label.set_size(label_font_size + 1)
+        if fixed_x_max > 0:
+            ax.set_xlim(0, fixed_x_max)
+        else:
+            ax.set_xlim(0, max(values.max() if not values.empty else 0, 1) * 1.15)
+        ax.grid(axis="x", alpha=0.25)
+        for container in ax.containers:
+            ax.bar_label(container, padding=3, fmt="%.0f", fontsize=label_font_size)
+        fig.tight_layout()
+        suffix = f"_{idx:02d}" if len(chunks) > 1 else ""
+        out_path = destination / f"{name}{suffix}.{fmt}"
+        fig.savefig(out_path, bbox_inches="tight", dpi=dpi_override or 250)
+        print(f"Grafico salvato: {out_path}")
+        plt.close(fig)
+
+
 def save_table_image(
     df: pd.DataFrame,
     destination: Path,
@@ -852,6 +1712,7 @@ def save_table_image(
     row_height_override: Optional[float] = None,
     header_height_override: Optional[float] = None,
     font_size: int = 8,
+    dpi_override: Optional[int] = None,
 ) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     if df.empty:
@@ -915,7 +1776,7 @@ def save_table_image(
                 ax.text(x, y, str(value), ha=ha, va="center", fontsize=cell_font_size, weight=weight)
         out_path = destination / f"{name}.{fmt}"
         fig.tight_layout()
-        fig.savefig(out_path, bbox_inches="tight")
+        fig.savefig(out_path, bbox_inches="tight", dpi=dpi_override or 200)
         print(f"Tabella salvata: {out_path}")
         plt.close(fig)
         return
@@ -972,9 +1833,100 @@ def save_table_image(
                 break
     out_path = destination / f"{name}.{fmt}"
     fig.tight_layout()
-    fig.savefig(out_path, bbox_inches="tight")
+    fig.savefig(out_path, bbox_inches="tight", dpi=dpi_override or 200)
     print(f"Tabella salvata: {out_path}")
     plt.close(fig)
+
+
+def save_chunked_table_image(
+    df: pd.DataFrame,
+    destination: Path,
+    name: str,
+    fmt: str,
+    chunk_size: int = 10,
+    font_size: int = 22,
+    header_font_size: int = 18,
+    panel_width: float = 7.8,
+    panel_height: float = 7.8,
+    row_height_scale: float = 1.9,
+    dpi_override: Optional[int] = None,
+) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    if df.empty:
+        return
+
+    shown = df.copy()
+    shown = shown.reset_index() if shown.index.name or shown.index.names else shown.reset_index(drop=False)
+    if shown.columns[0] == "index":
+        shown = shown.rename(columns={"index": ""})
+
+    total_mask = shown.iloc[:, 0].astype(str).str.upper().eq("TOTAL")
+    total_row = shown[total_mask].copy()
+    shown = shown[~total_mask].copy()
+
+    rows = shown.to_dict(orient="records")
+    chunks = [rows[i : i + chunk_size] for i in range(0, len(rows), chunk_size)]
+    if total_row is not None and not total_row.empty:
+        total_chunk = total_row.to_dict(orient="records")
+        if chunks:
+            chunks.append(total_chunk)
+        else:
+            chunks = [total_chunk]
+
+    for panel_idx, chunk in enumerate(chunks, start=1):
+        panel_df = pd.DataFrame(chunk)
+        if panel_df.empty:
+            continue
+        panel_df = panel_df[shown.columns]
+        panel_df = panel_df.reset_index(drop=True)
+
+        fig_width = max(14.0, panel_width)
+        fig_height = max(panel_height, 0.42 * len(panel_df) + 1.8)
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        ax.axis("off")
+
+        n_cols = len(panel_df.columns)
+        if n_cols > 1:
+            first_col_width = 0.36
+            remaining_width = max(0.1, 1.0 - first_col_width)
+            other_col_width = remaining_width / (n_cols - 1)
+            col_widths = [first_col_width] + [other_col_width] * (n_cols - 1)
+        else:
+            col_widths = [1.0]
+
+        table = ax.table(
+            cellText=panel_df.values,
+            colLabels=panel_df.columns,
+            loc="center",
+            cellLoc="center",
+            colWidths=col_widths,
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(font_size)
+        table.scale(1.0, row_height_scale)
+
+        for (r, c), cell in table.get_celld().items():
+            cell.set_edgecolor("black")
+            cell.set_linewidth(0.8)
+            if r == 0:
+                cell.set_text_props(weight="bold", fontsize=header_font_size)
+                cell.set_facecolor("#f3f3f3")
+            elif c == 0:
+                cell.set_text_props(ha="left")
+
+        if len(panel_df.columns) > 0:
+            table[(0, 0)].set_text_props(ha="left", weight="bold", fontsize=header_font_size)
+            for r in range(1, len(panel_df) + 1):
+                if (r, 0) in table.get_celld():
+                    table[(r, 0)].set_text_props(ha="left", fontsize=font_size)
+                    table[(r, 0)].PAD = 0.05
+
+        suffix = f"_{panel_idx:02d}" if len(chunks) > 1 else ""
+        out_path = destination / f"{name}{suffix}.{fmt}"
+        fig.tight_layout()
+        fig.savefig(out_path, bbox_inches="tight", dpi=dpi_override or 300)
+        print(f"Tabella salvata: {out_path}")
+        plt.close(fig)
 
 
 def format_eur(value: object) -> str:
@@ -1006,12 +1958,16 @@ def main() -> None:
     csv_path = Path(config["csv_path"]).expanduser()
     output_dir = Path(config["output_dir"]).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
+    csv_dir = output_dir / "csv"
+    csv_dir.mkdir(parents=True, exist_ok=True)
 
     plots_cfg = config.get("plots", {})
     plots_enabled = plots_cfg.get("enabled", True)
     plot_format = plots_cfg.get("format", "png")
     plots_dir = output_dir / "plots"
-    timeline_markers = config.get("timeline_markers", []) or []
+    focused_ticket_cfg = config.get("focused_ticket_type_summary", {}) or {}
+    pdf_cfg = config.get("pdf_report", {}) or {}
+    narrative_pdf_cfg = config.get("narrative_pdf_report", {}) or {}
 
     columns_cfg: Dict[str, str] = config.get("columns", {})
     extra_country_cfg = config.get("extra_country_columns", []) or []
@@ -1034,6 +1990,11 @@ def main() -> None:
 
     pd.set_option("display.max_columns", 120)
     pd.set_option("display.width", 160)
+
+    order_status_counts: Optional[pd.Series] = None
+    by_type_df: Optional[pd.DataFrame] = None
+    phase_table_df: Optional[pd.DataFrame] = None
+    amb_table_df: Optional[pd.DataFrame] = None
 
     print(f"Carico CSV: {csv_path}")
     df_raw = pd.read_csv(csv_path, **READ_KWARGS)
@@ -1064,22 +2025,6 @@ def main() -> None:
                 resolved.append(found)
         return resolved
 
-    def parse_timeline_markers(raw_markers: Iterable[object]) -> List[Dict[str, object]]:
-        parsed: List[Dict[str, object]] = []
-        for item in raw_markers:
-            if not isinstance(item, dict):
-                continue
-            label = str(item.get("label", "")).strip()
-            date_str = str(item.get("date", "")).strip()
-            color = item.get("color") or "#ef6c00"
-            if not label or not date_str:
-                continue
-            ts = pd.to_datetime(date_str, errors="coerce")
-            if pd.isna(ts):
-                continue
-            parsed.append({"label": label, "date": ts.normalize(), "color": color})
-        return parsed
-
     payment_date_col = ensure_existing(col_value("payment_date", "Payment Date"))
     ticket_type_col = ensure_existing(col_value("ticket_type", "Ticket Type"))
     ticket_total_col = ensure_existing(col_value("ticket_total", "Ticket Total"))
@@ -1097,7 +2042,6 @@ def main() -> None:
     geo_country_cols = resolve_existing_list([country_col] + to_list(extra_country_cfg))
     geo_city_cols = resolve_existing_list([city_col] + to_list(extra_city_cfg))
     geo_report_cols = list(dict.fromkeys(geo_country_cols + geo_city_cols))
-    parsed_timeline_markers = parse_timeline_markers(timeline_markers)
     attendee_email_col = ensure_existing(col_value("attendee_email", "Attendee E-mail"))
     buyer_email_col = ensure_existing(col_value("buyer_email", "Buyer E-Mail"))
     order_number_col = ensure_existing(col_value("order_number", "Order Number"))
@@ -1114,6 +2058,21 @@ def main() -> None:
         df[PARSED_DATE_COL] = df[payment_date_col].map(parse_payment_date)
     else:
         df[PARSED_DATE_COL] = pd.NaT
+
+    timeline_markers = config.get("timeline_markers", []) or []
+    parsed_timeline_markers = parse_timeline_markers(timeline_markers)
+    if ticket_type_col and payment_date_col:
+        lovers_color = marker_color_by_label(parsed_timeline_markers, "lovers bundle", LOVERS_BUNDLE_COLOR)
+        christmas_markers = build_dynamic_bundle_markers(
+            df,
+            PARSED_DATE_COL,
+            ticket_type_col,
+            CHRISTMAS_BUNDLE_KEYWORD,
+            lovers_color,
+        )
+        if christmas_markers:
+            timeline_markers = sync_christmas_bundle_markers(config, config_path, christmas_markers)
+            parsed_timeline_markers = parse_timeline_markers(timeline_markers)
 
     numeric_targets = set(NUMERIC_CANDIDATES)
     numeric_targets.update(
@@ -1153,11 +2112,16 @@ def main() -> None:
         print("\nColonna Order Status non disponibile: analisi su tutte le righe.")
         df = df_full
 
-    clean_path = output_dir / "tickets_clean.csv"
-    df.to_csv(clean_path, index=False, encoding="utf-8")
-    print(f"\nFile pulito salvato in: {clean_path}")
+    clean_path = csv_dir / "tickets_clean.csv"
+    try:
+        df.to_csv(clean_path, index=False, encoding="utf-8")
+        print(f"\nFile pulito salvato in: {clean_path}")
+    except PermissionError:
+        fallback_clean_path = csv_dir / "tickets_clean_recovered.csv"
+        df.to_csv(fallback_clean_path, index=False, encoding="utf-8")
+        print(f"\nFile pulito salvato in fallback (per file bloccato): {fallback_clean_path}")
 
-    missing_report_path = output_dir / "column_missing_report.txt"
+    missing_report_path = csv_dir / "column_missing_report.txt"
     write_missing_report(df_raw, missing_report_path, df_paid=df)
 
     n_rows, n_cols = df.shape
@@ -1248,21 +2212,31 @@ def main() -> None:
         )
         print("\nVendite per tipo di ticket:")
         print(by_type.head(20))
+        by_type_df = by_type.copy()
 
         if plots_enabled:
-            type_counts = by_type["tickets"].sort_values(ascending=True)
-            height = max(4, 0.6 * len(type_counts))
-            fig, ax = plt.subplots(figsize=(10, height))
-            type_counts.plot(kind="barh", ax=ax, color="#1976d2")
-            ax.set_title("Conteggio biglietti per tipo")
-            ax.set_xlabel("Biglietti")
-            ax.set_ylabel("")
-            max_count = int(type_counts.max()) if not type_counts.empty else 0
-            if max_count:
-                ax.set_xlim(0, max_count * 1.15)
-                ax.bar_label(ax.containers[0], padding=3, fmt="%.0f")
-            fig.tight_layout()
-            save_plot(fig, plots_dir, "ticket_type_counts", plot_format)
+            save_chunked_barh_plot(
+                by_type[["tickets"]].copy(),
+                plots_dir,
+                "ticket_type_counts",
+                plot_format,
+                chunk_size=15,
+                fig_width=14.5,
+                base_height=5.4,
+                row_height_scale=0.62,
+                label_font_size=12,
+                title_font_size=16,
+                dpi_override=250,
+            )
+
+        export_focused_ticket_summary(
+            df,
+            ticket_type_col,
+            output_dir,
+            plots_dir,
+            plot_format,
+            focused_ticket_cfg,
+        )
 
     # === Ricavi per fase (da Ticket Type) ====================================
     if ticket_type_col in df.columns:
@@ -1288,7 +2262,8 @@ def main() -> None:
         phase_table = pd.concat([phase_table, total_row])
         phase_table = phase_table.rename(columns={"amount_eur": "Total Amount (€)"})
         phase_table["Total Amount (€)"] = phase_table["Total Amount (€)"].map(format_eur)
-        phase_path = output_dir / "phase_revenue_from_ticket_type.csv"
+        phase_table_df = phase_table.copy()
+        phase_path = csv_dir / "phase_revenue_from_ticket_type.csv"
         phase_table.to_csv(phase_path, encoding="utf-8")
         print(f"\nRicavi per fase (da Ticket Type) salvati in: {phase_path}")
         save_table_image(phase_table, plots_dir, "table_phase_revenue_from_ticket_type", plot_format)
@@ -1401,14 +2376,15 @@ def main() -> None:
                 if phase_renames:
                     amb_table = amb_table.rename(columns=phase_renames)
                 amb_table[amount_col] = amb_table[amount_col].map(format_eur)
-                amb_path = output_dir / "ambassador_sales.csv"
+                amb_table_df = amb_table.copy()
+                amb_path = csv_dir / "ambassador_sales.csv"
                 amb_table.to_csv(amb_path, encoding="utf-8")
                 print(f"\nReport ambassador salvato in: {amb_path}")
                 shown_cols_count = len(amb_table.columns) + 1
                 first_col_width = 0.38
                 other_col_width = (1.0 - first_col_width) / max(1, shown_cols_count - 1)
                 amb_col_widths = [first_col_width] + [other_col_width] * (shown_cols_count - 1)
-                table_width = max(12.0, 1.9 * shown_cols_count)
+                table_width = max(14.0, 2.4 * shown_cols_count)
                 save_table_image(
                     amb_table,
                     plots_dir,
@@ -1417,12 +2393,26 @@ def main() -> None:
                     highlight_value="TOTAL",
                     manual_table=True,
                     col_widths_override=amb_col_widths,
-                    font_size=14,
+                    font_size=22,
                     fig_width_override=table_width,
-                    fig_height_override=max(6.0, 0.7 * len(amb_table)),
-                    header_font_size=13,
-                    row_height_override=1.45,
-                    header_height_override=1.7,
+                    fig_height_override=max(10.0, 1.05 * len(amb_table)),
+                    header_font_size=18,
+                    row_height_override=2.3,
+                    header_height_override=2.6,
+                    dpi_override=250,
+                )
+                save_chunked_table_image(
+                    amb_table,
+                    plots_dir,
+                    "table_ambassador_sales_readable",
+                    plot_format,
+                    chunk_size=10,
+                    font_size=22,
+                    header_font_size=19,
+                    panel_width=max(18.0, 3.4 * shown_cols_count),
+                    panel_height=6.2,
+                    row_height_scale=1.75,
+                    dpi_override=350,
                 )
 
     # === Payment Gateway =====================================================
@@ -1594,10 +2584,48 @@ def main() -> None:
         ticket_type_col,
         ticket_total_num,
         payment_gateway_col,
-        output_dir,
+        csv_dir,
         plots_dir,
         plot_format,
     )
+
+    if bool(pdf_cfg.get("enabled", True)):
+        export_detailed_pdf_report(
+            output_dir=output_dir,
+            csv_path=csv_path,
+            df_raw=df_raw,
+            df=df,
+            csv_dir=csv_dir,
+            plots_dir=plots_dir,
+            timeline_markers=timeline_markers,
+            ticket_type_col=ticket_type_col,
+            ticket_total_num=ticket_total_num,
+            order_total_num=order_total_num,
+            order_status_col=order_status_col,
+            country_col=country_col,
+            city_col=city_col,
+            dob_col=dob_col,
+            order_status_counts=order_status_counts,
+            by_type=by_type_df,
+            phase_table=phase_table_df,
+            amb_table=amb_table_df,
+        )
+
+    if bool(narrative_pdf_cfg.get("enabled", True)):
+        export_narrative_pdf_report(
+            output_dir=output_dir,
+            csv_path=csv_path,
+            df_raw=df_raw,
+            df=df,
+            timeline_markers=timeline_markers,
+            ticket_type_col=ticket_type_col,
+            ticket_total_num=ticket_total_num,
+            order_total_num=order_total_num,
+            order_status_counts=order_status_counts,
+            by_type=by_type_df,
+            phase_table=phase_table_df,
+            amb_table=amb_table_df,
+        )
 
     print("\nAnalisi completata.")
 

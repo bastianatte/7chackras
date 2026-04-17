@@ -7,6 +7,7 @@
       "request": "launch",
       "program": "${workspaceFolder}/Code/ticket_eda.py",
       "console": "integratedTerminal",
+      
       "cwd": "${workspaceFolder}",
       "args": [
         "--config",
@@ -16,7 +17,7 @@
     {
       "name": "Match Soci 2026",
       "type": "debugpy",
-      "request": "launch",
+      "request": "launch", 
       "program": "${workspaceFolder}/Code/members_ticket_match.py",
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
@@ -24,11 +25,11 @@
         "--members",
         "${workspaceFolder}/output/Libro_Soci_2025-2026/Libro_soci_2025.csv",
         "--tickets",
-        "${workspaceFolder}/output/Libro_Soci_2025-2026/ListaTickets_31.12.25_10_50.csv",
+        "${workspaceFolder}//Documenti/LibroSoci2026/libro-soci-2026_nuovi-soci_2Tranche_customer449.csv",
         "--output-dir",
-        "${workspaceFolder}/output/Libro_Soci_2025-2026/match_2026_reports_31.12.25_10_50_updated_2"
+        "${workspaceFolder}/Documenti/LibroSoci2026/libro-soci-2026_2Tranche_customer449"
       ]
-    },
+    }, 
     {
       "name": "Ticket Phase Summary",
       "type": "debugpy",
@@ -84,8 +85,9 @@
       "cwd": "${workspaceFolder}",
       "args": [
         "--input",
-        // "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2025_onlyGood.csv"
-        "${workspaceFolder}/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_definitivo.csv" ]
+        "${workspaceFolder}/Documenti/Tickets/2026_28Marzo_08_15.csv"
+        // "${workspaceFolder}/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_definitivo.csv"
+      ]
     },
     {
       "name": "CSV Flatten (generic)",
@@ -112,7 +114,7 @@
         "${workspaceFolder}/Documenti/Tickets/Lista_ticket_7chakras_2025_onlyGood/Lista_ticket_7chakras_2025_onlyGood_VERIFIED_FLAT.csv",
         "${workspaceFolder}/Documenti/Tickets/UntilPhase1_definitivo/UntilPhase1_2026_definitivo_FLAT.csv",
         "--output-dir",
-        "${workspaceFolder}/Documenti/Reports/vendite_distribuzione_finePhase1_updateWPicks_1",
+        "${workspaceFolder}/Documenti/Reports/vendite_distribuzione_finePhase1_updateWPicks_2",
         "--peak-analysis",
         "--peak-quantiles",
         "[0.9, 0.8, 0.7]"
@@ -126,8 +128,8 @@
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
       "args": [
-        "--input", "C:\\Users\\spina\\Documents\\Other_Codes\\7chackras\\Documenti\\Tickets\\UntilPhase1_2026_definitivo_FLAT_Phase0Only.csv",
-        "--ticket_keyword", "phase 0"
+        "--input", "C:\\Users\\spina\\Documents\\Other_Codes\\7chackras\\Documenti\\Tickets\\Until_4Marz26_12_12.csv",
+        "--ticket_keyword", "PHASE 1"
       ]
     }
   ]
