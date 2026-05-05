@@ -1,5 +1,7 @@
 # Output esterni (tutto ciò che viene generato sotto Documenti)
 Tickets/
+Ticket/*
+Volontari/
 Biglietti/
 Documenti/*csv
 Documenti/
@@ -13,3 +15,4 @@ Code/__pycache__/
 
 # Checkpoint notebook
 *.ipynb_checkpoints/
+.vscode/
