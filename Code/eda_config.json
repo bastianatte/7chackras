@@ -1,6 +1,6 @@
 {
-  "csv_path": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/2026_03Aprile_17_00_endPhase2.csv",
-  "output_dir": "C:/Users/spina/Documents/Other_Codes/7chackras/Documenti/Tickets/2026_03Aprile_17_00_endPhase2_Analysis_correct",
+  "csv_path": "C:/Seb/2ndJobsCodes/7chackras/Documenti/Tickets/2026_5Maggio_08_48.csv",
+  "output_dir": "C:/Seb/2ndJobsCodes/7chackras/Documenti/Tickets/2026_5Maggio_08_48_Analysis",
   "plots": {
     "enabled": true,
     "format": "png"

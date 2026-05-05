@@ -2381,10 +2381,10 @@ def main() -> None:
                 amb_table.to_csv(amb_path, encoding="utf-8")
                 print(f"\nReport ambassador salvato in: {amb_path}")
                 shown_cols_count = len(amb_table.columns) + 1
-                first_col_width = 0.38
+                first_col_width = 0.34
                 other_col_width = (1.0 - first_col_width) / max(1, shown_cols_count - 1)
                 amb_col_widths = [first_col_width] + [other_col_width] * (shown_cols_count - 1)
-                table_width = max(14.0, 2.4 * shown_cols_count)
+                table_width = max(14.0, 3.25 * shown_cols_count)
                 save_table_image(
                     amb_table,
                     plots_dir,
@@ -2396,7 +2396,7 @@ def main() -> None:
                     font_size=22,
                     fig_width_override=table_width,
                     fig_height_override=max(10.0, 1.05 * len(amb_table)),
-                    header_font_size=18,
+                    header_font_size=16,
                     row_height_override=2.3,
                     header_height_override=2.6,
                     dpi_override=250,
