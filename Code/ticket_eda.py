@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import textwrap
 from typing import Dict, Iterable, List, Optional
+import unicodedata
 
 import numpy as np
 import pandas as pd
@@ -53,6 +54,17 @@ NUMERIC_CANDIDATES = [
 
 DEFAULT_CHECKIN_COLUMNS = ["Checked-in", "Check-ins", "Check-outs"]
 PARSED_DATE_COL = "Payment_Date_parsed"
+FULL_FESTIVAL_INCLUDE_KEYWORDS = ("full festival", "ambassador", "bundle")
+FULL_FESTIVAL_EXCLUDE_KEYWORDS = ("caravan", "membership", "reticketing", "caregiver")
+VOLUNTEER_ANALYSIS_TICKET_TYPE_COL = "Ticket Type Analysis"
+IS_VOLUNTEER_COL = "Is Volunteer"
+VOLUNTEER_MATCH_METHOD_COL = "Volunteer Match Method"
+VOLUNTEER_SOURCE_NAME_COL = "Volunteer Source Name"
+VOLUNTEER_SOURCE_EMAIL_COL = "Volunteer Source Email"
+VOLUNTEER_ORIGINAL_TICKET_TYPE_COL = "Volunteer Original Ticket Type"
+VOLUNTEER_ORIGINAL_TICKET_TOTAL_COL = "Volunteer Original Ticket Total"
+VOLUNTEER_POTENTIAL_REFUND_COL = "Volunteer Potential Refund"
+VOLUNTEER_TICKET_PREFIX = "VOLUNTEER - "
 
 
 def load_config(path: Path) -> Dict[str, object]:
@@ -229,11 +241,272 @@ def focused_ticket_category(value: object) -> str:
     if phase_label:
         year_match = re.search(r"\b(20\d{2})\b", text)
         year_prefix = f"{year_match.group(1)} – " if year_match else ""
+        if "volunteer" in lowered:
+            return f"{year_prefix}VOLUNTEER – FULL FESTIVAL – {phase_label}"
         if "full festival" in lowered or "ambassador" in lowered:
             return f"{year_prefix}FULL FESTIVAL – {phase_label}"
         return f"{year_prefix}{phase_label}"
 
     return text
+
+
+def is_full_festival_pass_ticket(value: object) -> bool:
+    if value is None:
+        return False
+    normalized = str(value).lower()
+    normalized = normalized.replace("\u2013", "-").replace("\u2014", "-")
+    normalized = " ".join(normalized.split())
+    if not normalized:
+        return False
+    if any(keyword in normalized for keyword in FULL_FESTIVAL_EXCLUDE_KEYWORDS):
+        return False
+    return any(keyword in normalized for keyword in FULL_FESTIVAL_INCLUDE_KEYWORDS)
+
+
+def normalize_match_email(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip().lower()
+
+
+def normalize_match_name(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    text = unicodedata.normalize("NFKD", str(value).strip().lower())
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^a-z ]+", " ", text)
+    return " ".join(text.split())
+
+
+def name_tokens(value: object) -> tuple[str, ...]:
+    normalized = normalize_match_name(value)
+    return tuple(normalized.split()) if normalized else tuple()
+
+
+def is_name_token_match(volunteer_tokens: tuple[str, ...], candidate_tokens: tuple[str, ...]) -> bool:
+    if len(volunteer_tokens) < 2 or len(candidate_tokens) < 2:
+        return False
+    return set(volunteer_tokens).issubset(set(candidate_tokens))
+
+
+def join_name_parts(*values: object) -> str:
+    return " ".join(str(v).strip() for v in values if v is not None and not pd.isna(v) and str(v).strip())
+
+
+def volunteer_enriched_output_path(volunteers_path: Path, suffix: str) -> Path:
+    clean_suffix = suffix or "_enriched"
+    if not clean_suffix.startswith("_"):
+        clean_suffix = f"_{clean_suffix}"
+    return volunteers_path.with_name(f"{volunteers_path.stem}{clean_suffix}{volunteers_path.suffix}")
+
+
+def apply_volunteer_enrichment(
+    df: pd.DataFrame,
+    volunteers_cfg: Dict[str, object],
+    ticket_type_col: Optional[str],
+    ticket_total_num: Optional[str],
+    payment_date_col: Optional[str],
+    attendee_email_col: Optional[str],
+    buyer_email_col: Optional[str],
+    name_col: Optional[str],
+    first_name_col: Optional[str],
+    last_name_col: Optional[str],
+    order_number_col: Optional[str],
+    ticket_code_col: Optional[str],
+    ticket_id_col: Optional[str],
+    csv_dir: Path,
+) -> Dict[str, object]:
+    info: Dict[str, object] = {"enabled": False, "matched_count": 0}
+    if not volunteers_cfg or not volunteers_cfg.get("enabled", False):
+        return info
+    if not ticket_type_col or ticket_type_col not in df.columns:
+        print("\nVolontari: colonna Ticket Type non disponibile, enrichment saltato.")
+        return info
+
+    volunteers_path_raw = volunteers_cfg.get("csv_path")
+    if not volunteers_path_raw:
+        print("\nVolontari: csv_path non configurato, enrichment saltato.")
+        return info
+    volunteers_path = Path(str(volunteers_path_raw)).expanduser()
+    if not volunteers_path.exists():
+        print(f"\nVolontari: file non trovato, enrichment saltato: {volunteers_path}")
+        return info
+
+    name_source_col = str(volunteers_cfg.get("name_col", "Name") or "Name").strip()
+    email_source_col = str(volunteers_cfg.get("email_col", "Email") or "Email").strip()
+    volunteers = pd.read_csv(volunteers_path, dtype=str, keep_default_na=False)
+    volunteers.columns = [str(c).strip() for c in volunteers.columns]
+    if name_source_col not in volunteers.columns or email_source_col not in volunteers.columns:
+        print(
+            f"\nVolontari: colonne richieste non trovate in {volunteers_path.name}: "
+            f"{name_source_col!r}, {email_source_col!r}."
+        )
+        return info
+
+    working = df.copy()
+    if attendee_email_col and attendee_email_col in working.columns:
+        working["__vol_attendee_email_norm"] = working[attendee_email_col].map(normalize_match_email)
+    else:
+        working["__vol_attendee_email_norm"] = ""
+    if buyer_email_col and buyer_email_col in working.columns:
+        working["__vol_buyer_email_norm"] = working[buyer_email_col].map(normalize_match_email)
+    else:
+        working["__vol_buyer_email_norm"] = ""
+    if name_col and name_col in working.columns:
+        working["__vol_name_tokens"] = working[name_col].map(name_tokens)
+    else:
+        working["__vol_name_tokens"] = [tuple()] * len(working)
+    if first_name_col and last_name_col and first_name_col in working.columns and last_name_col in working.columns:
+        full_names = working.apply(lambda row: join_name_parts(row.get(first_name_col), row.get(last_name_col)), axis=1)
+        working["__vol_first_last_tokens"] = full_names.map(name_tokens)
+    else:
+        working["__vol_first_last_tokens"] = [tuple()] * len(working)
+
+    def candidate_name_match(row: pd.Series, volunteer_tokens: tuple[str, ...]) -> bool:
+        return is_name_token_match(volunteer_tokens, row["__vol_name_tokens"]) or is_name_token_match(
+            volunteer_tokens,
+            row["__vol_first_last_tokens"],
+        )
+
+    def choose_candidate(candidates: pd.DataFrame, volunteer_tokens: tuple[str, ...]) -> Optional[int]:
+        if candidates.empty:
+            return None
+
+        scored: List[tuple[int, int, float, int]] = []
+        for idx, row in candidates.iterrows():
+            full_festival_score = 1 if is_full_festival_pass_ticket(row.get(ticket_type_col)) else 0
+            name_score = 1 if candidate_name_match(row, volunteer_tokens) else 0
+            amount = to_num(row.get(ticket_total_num)) if ticket_total_num in row.index else 0.0
+            amount = 0.0 if pd.isna(amount) else float(amount)
+            scored.append((full_festival_score, name_score, amount, idx))
+        scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        return scored[0][3]
+
+    enriched_rows: List[Dict[str, object]] = []
+    matched_indices: Dict[int, Dict[str, object]] = {}
+
+    volunteers_norm = volunteers.copy()
+    volunteers_norm["__vol_email_norm"] = volunteers_norm[email_source_col].map(normalize_match_email)
+    volunteers_norm["__vol_name_tokens"] = volunteers_norm[name_source_col].map(name_tokens)
+
+    for _, volunteer in volunteers_norm.iterrows():
+        volunteer_email = volunteer["__vol_email_norm"]
+        volunteer_tokens = volunteer["__vol_name_tokens"]
+        email_candidates = working[
+            (working["__vol_attendee_email_norm"] == volunteer_email)
+            | (working["__vol_buyer_email_norm"] == volunteer_email)
+        ]
+        selected_idx = choose_candidate(email_candidates, volunteer_tokens)
+        match_method = "unmatched"
+        if selected_idx is not None:
+            selected_row = working.loc[selected_idx]
+            if candidate_name_match(selected_row, volunteer_tokens):
+                match_method = "email_and_name_match"
+            else:
+                match_method = "email_only_match"
+        else:
+            name_mask = working.apply(lambda row: candidate_name_match(row, volunteer_tokens), axis=1)
+            name_candidates = working[name_mask]
+            selected_idx = choose_candidate(name_candidates, volunteer_tokens)
+            if selected_idx is not None:
+                match_method = "name_only_match"
+
+        matched_row = working.loc[selected_idx] if selected_idx is not None else pd.Series(dtype=object)
+        ticket_total_value = matched_row.get(ticket_total_num, np.nan) if ticket_total_num and ticket_total_num in matched_row.index else np.nan
+        matched_ticket_type = matched_row.get(ticket_type_col, "")
+        enriched = {
+            name_source_col: volunteer.get(name_source_col, ""),
+            email_source_col: volunteer.get(email_source_col, ""),
+            "Volunteer Match Method": match_method,
+            "Matched Ticket Type": matched_ticket_type,
+            "Matched Ticket Total": ticket_total_value,
+            "Matched Payment Date": matched_row.get(payment_date_col, "") if payment_date_col else "",
+            "Matched Order Number": matched_row.get(order_number_col, "") if order_number_col else "",
+            "Matched Ticket Code": matched_row.get(ticket_code_col, "") if ticket_code_col else "",
+            "Matched Ticket ID": matched_row.get(ticket_id_col, "") if ticket_id_col else "",
+            "Matched Attendee E-mail": matched_row.get(attendee_email_col, "") if attendee_email_col else "",
+            "Matched Buyer E-Mail": matched_row.get(buyer_email_col, "") if buyer_email_col else "",
+            "Matched Ticket Holder Name": matched_row.get(name_col, "") if name_col else "",
+            "Matched Row Index": selected_idx if selected_idx is not None else "",
+        }
+        enriched_rows.append(enriched)
+
+        if selected_idx is not None:
+            matched_indices[selected_idx] = {
+                "method": match_method,
+                "source_name": volunteer.get(name_source_col, ""),
+                "source_email": volunteer.get(email_source_col, ""),
+            }
+
+    enriched_df = pd.DataFrame(enriched_rows)
+    enriched_path = volunteer_enriched_output_path(
+        volunteers_path,
+        str(volunteers_cfg.get("enriched_suffix", "_enriched") or "_enriched"),
+    )
+    enriched_df.to_csv(enriched_path, index=False, encoding="utf-8")
+
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    output_copy_path = csv_dir / enriched_path.name
+    enriched_df.to_csv(output_copy_path, index=False, encoding="utf-8")
+
+    df[IS_VOLUNTEER_COL] = "No"
+    df[VOLUNTEER_MATCH_METHOD_COL] = ""
+    df[VOLUNTEER_SOURCE_NAME_COL] = ""
+    df[VOLUNTEER_SOURCE_EMAIL_COL] = ""
+    df[VOLUNTEER_ORIGINAL_TICKET_TYPE_COL] = ""
+    df[VOLUNTEER_ORIGINAL_TICKET_TOTAL_COL] = np.nan
+    df[VOLUNTEER_POTENTIAL_REFUND_COL] = 0.0
+    df[VOLUNTEER_ANALYSIS_TICKET_TYPE_COL] = df[ticket_type_col].fillna("")
+
+    for idx, match in matched_indices.items():
+        if idx not in df.index:
+            continue
+        original_type = df.at[idx, ticket_type_col]
+        original_total = df.at[idx, ticket_total_num] if ticket_total_num and ticket_total_num in df.columns else np.nan
+        df.at[idx, IS_VOLUNTEER_COL] = "Yes"
+        df.at[idx, VOLUNTEER_MATCH_METHOD_COL] = match["method"]
+        df.at[idx, VOLUNTEER_SOURCE_NAME_COL] = match["source_name"]
+        df.at[idx, VOLUNTEER_SOURCE_EMAIL_COL] = match["source_email"]
+        df.at[idx, VOLUNTEER_ORIGINAL_TICKET_TYPE_COL] = original_type
+        df.at[idx, VOLUNTEER_ORIGINAL_TICKET_TOTAL_COL] = original_total
+        df.at[idx, VOLUNTEER_POTENTIAL_REFUND_COL] = original_total if pd.notna(original_total) else 0.0
+        df.at[idx, VOLUNTEER_ANALYSIS_TICKET_TYPE_COL] = f"{VOLUNTEER_TICKET_PREFIX}{original_type}"
+
+    match_counts = enriched_df["Volunteer Match Method"].value_counts(dropna=False).to_dict()
+    matched_count = int((enriched_df["Volunteer Match Method"] != "unmatched").sum())
+    refund_total = float(pd.to_numeric(df[VOLUNTEER_POTENTIAL_REFUND_COL], errors="coerce").fillna(0).sum())
+    summary = pd.DataFrame(
+        [
+            {"metric": "volunteers_source_rows", "value": int(len(volunteers))},
+            {"metric": "volunteers_matched", "value": matched_count},
+            {"metric": "volunteers_unmatched", "value": int((enriched_df["Volunteer Match Method"] == "unmatched").sum())},
+            {"metric": "volunteer_potential_refund", "value": refund_total},
+        ]
+    )
+    summary.to_csv(csv_dir / "volunteer_economics.csv", index=False, encoding="utf-8")
+
+    print(f"\nVolontari caricati: {len(volunteers):,}")
+    print(f"Volontari matchati: {matched_count:,} su {len(volunteers):,}")
+    print("Metodo match volontari:")
+    for method, count in sorted(match_counts.items()):
+        print(f" - {method}: {count}")
+    print(f"Potenziale rimborso volontari: {refund_total:,.2f}")
+    print(f"File volontari enriched salvato in: {enriched_path}")
+    print(f"Copia output volontari enriched salvata in: {output_copy_path}")
+
+    info.update(
+        {
+            "enabled": True,
+            "matched_count": matched_count,
+            "source_count": int(len(volunteers)),
+            "refund_total": refund_total,
+            "analysis_ticket_type_col": VOLUNTEER_ANALYSIS_TICKET_TYPE_COL,
+            "enriched_path": str(enriched_path),
+            "output_copy_path": str(output_copy_path),
+            "summary_path": str(csv_dir / "volunteer_economics.csv"),
+        }
+    )
+    return info
 
 
 def build_focused_ticket_summary(df: pd.DataFrame, ticket_type_col: str) -> pd.DataFrame:
@@ -402,6 +675,184 @@ def plot_sales_timelines(
         ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0.0, fontsize=10)
     fig.tight_layout(rect=[0, 0, 0.8, 1])
     save_plot(fig, plots_dir, "vendite_cumulative", fmt)
+
+
+def build_monthly_ticket_sales_summary(
+    df: pd.DataFrame,
+    ticket_type_col: Optional[str],
+) -> pd.DataFrame:
+    """Monthly ticket totals and daily averages for all tickets and full festival passes."""
+    if PARSED_DATE_COL not in df.columns:
+        return pd.DataFrame()
+
+    ts = df.dropna(subset=[PARSED_DATE_COL]).copy()
+    if ts.empty:
+        return pd.DataFrame()
+
+    ts["_sale_date"] = ts[PARSED_DATE_COL].dt.normalize()
+    ts["_sale_month"] = ts[PARSED_DATE_COL].dt.to_period("M")
+    min_date = ts["_sale_date"].min().normalize()
+    max_date = ts["_sale_date"].max().normalize()
+    months = pd.period_range(min_date.to_period("M"), max_date.to_period("M"), freq="M")
+
+    if ticket_type_col and ticket_type_col in ts.columns:
+        full_festival_mask = ts[ticket_type_col].map(is_full_festival_pass_ticket)
+    else:
+        full_festival_mask = pd.Series(False, index=ts.index)
+
+    all_monthly = ts.groupby("_sale_month").size()
+    all_active_days = ts.groupby("_sale_month")["_sale_date"].nunique()
+    full_ts = ts.loc[full_festival_mask].copy()
+    full_monthly = full_ts.groupby("_sale_month").size() if not full_ts.empty else pd.Series(dtype=int)
+    full_active_days = (
+        full_ts.groupby("_sale_month")["_sale_date"].nunique()
+        if not full_ts.empty
+        else pd.Series(dtype=int)
+    )
+
+    rows: List[Dict[str, object]] = []
+    for month in months:
+        month_start = max(month.start_time.normalize(), min_date)
+        month_end = min(month.end_time.normalize(), max_date)
+        observed_days = int((month_end - month_start).days + 1) if month_end >= month_start else 0
+
+        all_tickets = int(all_monthly.get(month, 0))
+        full_tickets = int(full_monthly.get(month, 0))
+        all_days = int(all_active_days.get(month, 0))
+        full_days = int(full_active_days.get(month, 0))
+
+        rows.append(
+            {
+                "month": str(month),
+                "observed_days": observed_days,
+                "all_tickets": all_tickets,
+                "all_active_sales_days": all_days,
+                "all_avg_per_observed_day": all_tickets / observed_days if observed_days else 0.0,
+                "all_avg_per_active_sales_day": all_tickets / all_days if all_days else 0.0,
+                "full_festival_tickets": full_tickets,
+                "full_festival_active_sales_days": full_days,
+                "full_festival_avg_per_observed_day": full_tickets / observed_days if observed_days else 0.0,
+                "full_festival_avg_per_active_sales_day": full_tickets / full_days if full_days else 0.0,
+                "full_festival_share_pct": (full_tickets / all_tickets * 100) if all_tickets else 0.0,
+            }
+        )
+
+    summary = pd.DataFrame(rows)
+    float_cols = [
+        "all_avg_per_observed_day",
+        "all_avg_per_active_sales_day",
+        "full_festival_avg_per_observed_day",
+        "full_festival_avg_per_active_sales_day",
+        "full_festival_share_pct",
+    ]
+    for col in float_cols:
+        summary[col] = summary[col].round(2)
+    return summary
+
+
+def _label_monthly_bars(ax: plt.Axes, decimals: int = 1) -> None:
+    fmt = f"%.{decimals}f"
+    for container in ax.containers:
+        ax.bar_label(container, padding=3, fmt=fmt, fontsize=9)
+
+
+def _plot_single_monthly_average(
+    summary: pd.DataFrame,
+    value_col: str,
+    title: str,
+    color: str,
+    plots_dir: Path,
+    name: str,
+    fmt: str,
+) -> None:
+    fig_width = max(10.0, 0.72 * len(summary) + 3.0)
+    fig, ax = plt.subplots(figsize=(fig_width, 5.6))
+    x_labels = summary["month"].astype(str)
+    values = summary[value_col].astype(float)
+    ax.bar(x_labels, values, color=color, width=0.78)
+    ax.set_title(title)
+    ax.set_xlabel("Mese")
+    ax.set_ylabel("Biglietti / giorno osservato")
+    ax.grid(axis="y", alpha=0.25)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:.1f}"))
+    if not values.empty and values.max() > 0:
+        ax.set_ylim(0, values.max() * 1.22)
+    ax.tick_params(axis="x", rotation=45)
+    _label_monthly_bars(ax, decimals=1)
+    fig.tight_layout()
+    save_plot(fig, plots_dir, name, fmt)
+
+
+def plot_monthly_ticket_sales_summary(
+    summary: pd.DataFrame,
+    plots_dir: Path,
+    fmt: str,
+) -> None:
+    if summary.empty:
+        print("\nNessun dato disponibile per i grafici mensili.")
+        return
+
+    _plot_single_monthly_average(
+        summary,
+        "all_avg_per_observed_day",
+        "Media giornaliera biglietti venduti per mese - tutti i ticket",
+        "#1565c0",
+        plots_dir,
+        "vendite_mensili_media_giornaliera_tutti_ticket",
+        fmt,
+    )
+    _plot_single_monthly_average(
+        summary,
+        "full_festival_avg_per_observed_day",
+        "Media giornaliera full festival pass venduti per mese",
+        "#2e7d32",
+        plots_dir,
+        "vendite_mensili_media_giornaliera_full_festival",
+        fmt,
+    )
+
+    x = np.arange(len(summary))
+    width = 0.38
+    labels = summary["month"].astype(str).tolist()
+
+    fig_width = max(11.0, 0.8 * len(summary) + 3.0)
+    fig, ax = plt.subplots(figsize=(fig_width, 5.8))
+    all_avg = summary["all_avg_per_observed_day"].astype(float)
+    full_avg = summary["full_festival_avg_per_observed_day"].astype(float)
+    ax.bar(x - width / 2, all_avg, width, label="Tutti i ticket", color="#1565c0")
+    ax.bar(x + width / 2, full_avg, width, label="Full festival pass", color="#2e7d32")
+    ax.set_title("Media giornaliera biglietti venduti per mese")
+    ax.set_xlabel("Mese")
+    ax.set_ylabel("Biglietti / giorno osservato")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend()
+    max_value = max(float(all_avg.max()), float(full_avg.max())) if not summary.empty else 0.0
+    if max_value > 0:
+        ax.set_ylim(0, max_value * 1.22)
+    _label_monthly_bars(ax, decimals=1)
+    fig.tight_layout()
+    save_plot(fig, plots_dir, "vendite_mensili_media_giornaliera_confronto", fmt)
+
+    fig, ax = plt.subplots(figsize=(fig_width, 5.8))
+    all_totals = summary["all_tickets"].astype(int)
+    full_totals = summary["full_festival_tickets"].astype(int)
+    ax.bar(x - width / 2, all_totals, width, label="Tutti i ticket", color="#5c6bc0")
+    ax.bar(x + width / 2, full_totals, width, label="Full festival pass", color="#00897b")
+    ax.set_title("Biglietti venduti per mese")
+    ax.set_xlabel("Mese")
+    ax.set_ylabel("Biglietti")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend()
+    max_total = max(int(all_totals.max()), int(full_totals.max())) if not summary.empty else 0
+    if max_total > 0:
+        ax.set_ylim(0, max_total * 1.18)
+    _label_monthly_bars(ax, decimals=0)
+    fig.tight_layout()
+    save_plot(fig, plots_dir, "vendite_mensili_totali_confronto", fmt)
 
 
 def analyze_geography(
@@ -1122,6 +1573,12 @@ def build_phase_window_summary(
                 phase_markers.append({"label": marker.get("label"), "date": ts.normalize()})
     phase_markers.sort(key=lambda item: item["date"])
 
+    data_end = pd.NaT
+    if PARSED_DATE_COL in df.columns:
+        valid_dates = df[PARSED_DATE_COL].dropna()
+        if not valid_dates.empty:
+            data_end = valid_dates.max().normalize()
+
     phase_labels = df[ticket_type_col].fillna("").map(extract_phase_label)
     rows: List[Dict[str, object]] = []
     for idx, marker in enumerate(phase_markers):
@@ -1129,6 +1586,15 @@ def build_phase_window_summary(
         bucket = timeline_marker_to_bucket(label)
         start = marker["date"]
         end = phase_markers[idx + 1]["date"] if idx + 1 < len(phase_markers) else pd.NaT
+        if pd.notna(end):
+            span_days = int((end - start).days)
+            end_label = end.strftime("%d/%m/%Y")
+        elif pd.notna(data_end) and data_end >= start:
+            span_days = int((data_end - start).days) + 1
+            end_label = f"ongoing ({data_end.strftime('%d/%m/%Y')})"
+        else:
+            span_days = np.nan
+            end_label = "ongoing"
         mask = phase_labels.eq(bucket)
         tickets = int(mask.sum())
         revenue = (
@@ -1136,13 +1602,12 @@ def build_phase_window_summary(
             if ticket_total_num and ticket_total_num in df.columns
             else np.nan
         )
-        span_days = int((end - start).days) if pd.notna(end) else np.nan
         tickets_per_day = float(tickets / span_days) if pd.notna(span_days) and span_days > 0 else np.nan
         rows.append(
             {
                 "phase": bucket,
                 "start": start.strftime("%d/%m/%Y"),
-                "end": end.strftime("%d/%m/%Y") if pd.notna(end) else "ongoing",
+                "end": end_label,
                 "span_days": span_days,
                 "tickets": tickets,
                 "tickets/day": tickets_per_day,
@@ -1339,10 +1804,12 @@ def export_detailed_pdf_report(
 
     phase1_amb_share = np.nan
     phase2_amb_share = np.nan
+    phase3_amb_share = np.nan
     if amb_table is not None and not amb_table.empty and phase_table is not None and not phase_table.empty:
         amb_body = amb_table.drop(index="TOTAL", errors="ignore").copy()
         phase1_cols = [c for c in amb_body.columns if "phase_1" in str(c).lower()]
         phase2_cols = [c for c in amb_body.columns if "phase_2" in str(c).lower()]
+        phase3_cols = [c for c in amb_body.columns if "phase_3" in str(c).lower()]
         if phase1_cols:
             phase1_total = int(phase_table.loc["phase_1", "tickets"]) if "phase_1" in phase_table.index else np.nan
             phase1_amb = pd.to_numeric(amb_body[phase1_cols].stack(), errors="coerce").sum()
@@ -1351,6 +1818,17 @@ def export_detailed_pdf_report(
             phase2_total = int(phase_table.loc["phase_2", "tickets"]) if "phase_2" in phase_table.index else np.nan
             phase2_amb = pd.to_numeric(amb_body[phase2_cols].stack(), errors="coerce").sum()
             phase2_amb_share = (phase2_amb / phase2_total * 100) if phase2_total else np.nan
+        if phase3_cols:
+            phase3_total = int(phase_table.loc["phase_3", "tickets"]) if "phase_3" in phase_table.index else np.nan
+            phase3_amb = pd.to_numeric(amb_body[phase3_cols].stack(), errors="coerce").sum()
+            phase3_amb_share = (phase3_amb / phase3_total * 100) if phase3_total else np.nan
+
+    phase1_tickets = int(phase_summary.loc[phase_summary["phase"] == "phase_1", "tickets"].sum()) if not phase_summary.empty and "phase_1" in set(phase_summary.get("phase", [])) else 0
+    phase2_tickets = int(phase_summary.loc[phase_summary["phase"] == "phase_2", "tickets"].sum()) if not phase_summary.empty and "phase_2" in set(phase_summary.get("phase", [])) else 0
+    phase3_tickets = int(phase_summary.loc[phase_summary["phase"] == "phase_3", "tickets"].sum()) if not phase_summary.empty and "phase_3" in set(phase_summary.get("phase", [])) else 0
+    phase1_rate = float(phase_summary.loc[phase_summary["phase"] == "phase_1", "tickets/day"].astype(float).iloc[0]) if not phase_summary.empty and "phase_1" in set(phase_summary.get("phase", [])) else np.nan
+    phase2_rate = float(phase_summary.loc[phase_summary["phase"] == "phase_2", "tickets/day"].astype(float).iloc[0]) if not phase_summary.empty and "phase_2" in set(phase_summary.get("phase", [])) else np.nan
+    phase3_rate = float(phase_summary.loc[phase_summary["phase"] == "phase_3", "tickets/day"].astype(float).iloc[0]) if not phase_summary.empty and "phase_3" in set(phase_summary.get("phase", [])) else np.nan
 
     with PdfPages(pdf_path) as pdf:
         render_pdf_text_page(
@@ -1365,10 +1843,11 @@ def export_detailed_pdf_report(
             ],
             bullets=[
                 "Early bird and phase 0 should be treated as launch / pre-lineup windows, not as the core benchmark for the commercial engine.",
-                "Phase 1 and phase 2 sell the same volume, but phase 2 does it over a much shorter span, so the sales pace is stronger rather than flatter.",
-                "Ambassador contribution rises from phase 1 to phase 2, which suggests the ambassador channel becomes more important as the pricing ladder advances.",
+                f"Phase 1 sells {phase1_tickets:,} tickets at {phase1_rate:.2f} tickets/day; phase 2 sells {phase2_tickets:,} at {phase2_rate:.2f} tickets/day, so demand is denser after the first stable block.",
+                f"Phase 3 is now measurable, not just a future marker: {phase3_tickets:,} tickets at {phase3_rate:.2f} tickets/day in the observed window, so the current phase is holding the phase-2 pace so far.",
+                f"Ambassador contribution rises from phase 1 to phase 2 ({phase1_amb_share:.1f}% to {phase2_amb_share:.1f}%), then sits at {phase3_amb_share:.1f}% in the partial phase-3 window.",
                 "Christmas and Lovers bundles behave as tactical bursts: they are short windows with concentrated demand, not recurring structural phases.",
-                "The current config already contains a phase-3 marker, but the CSV does not yet show a meaningful phase-3 ticket family, so that stage is still early.",
+                "Monthly averages confirm the same trend: April is the strongest full month in both total tickets and full festival passes, while May is still a partial month.",
             ],
             footer="Generated by ticket_eda.py",
         )
@@ -1423,8 +1902,9 @@ def export_detailed_pdf_report(
                 amb_pdf = amb_pdf[keep_cols].head(12)
                 note = (
                     f"Ambassador share: phase 1 = {phase1_amb_share:.1f}% of phase-1 tickets; "
-                    f"phase 2 = {phase2_amb_share:.1f}% of phase-2 tickets."
-                    if pd.notna(phase1_amb_share) and pd.notna(phase2_amb_share)
+                    f"phase 2 = {phase2_amb_share:.1f}% of phase-2 tickets; "
+                    f"phase 3 = {phase3_amb_share:.1f}% of phase-3 tickets so far."
+                    if pd.notna(phase1_amb_share) and pd.notna(phase2_amb_share) and pd.notna(phase3_amb_share)
                     else "Ambassador sales are concentrated in a small subset of profiles, with a long tail of low-volume contributors."
                 )
                 render_pdf_table_page(
@@ -1490,28 +1970,67 @@ def export_narrative_pdf_report(
 
     phase_summary = build_phase_window_summary(df, timeline_markers, ticket_type_col, ticket_total_num)
     bundle_summary = build_bundle_summary(df, timeline_markers, ticket_type_col, ticket_total_num)
+    monthly_sales = build_monthly_ticket_sales_summary(df, ticket_type_col)
+
+    best_all_month = "n/d"
+    best_all_avg = np.nan
+    best_full_month = "n/d"
+    best_full_avg = np.nan
+    latest_month = "n/d"
+    latest_observed_days = 0
+    latest_all_avg = np.nan
+    latest_full_avg = np.nan
+    if not monthly_sales.empty:
+        monthly_complete = monthly_sales.copy()
+        monthly_complete["days_in_month"] = monthly_complete["month"].map(
+            lambda value: pd.Period(str(value), freq="M").days_in_month
+        )
+        monthly_complete = monthly_complete[
+            monthly_complete["observed_days"] >= monthly_complete["days_in_month"]
+        ]
+        if not monthly_complete.empty:
+            best_all_row = monthly_complete.loc[monthly_complete["all_avg_per_observed_day"].idxmax()]
+            best_full_row = monthly_complete.loc[
+                monthly_complete["full_festival_avg_per_observed_day"].idxmax()
+            ]
+            best_all_month = str(best_all_row["month"])
+            best_all_avg = float(best_all_row["all_avg_per_observed_day"])
+            best_full_month = str(best_full_row["month"])
+            best_full_avg = float(best_full_row["full_festival_avg_per_observed_day"])
+        latest_row = monthly_sales.iloc[-1]
+        latest_month = str(latest_row["month"])
+        latest_observed_days = int(latest_row["observed_days"])
+        latest_all_avg = float(latest_row["all_avg_per_observed_day"])
+        latest_full_avg = float(latest_row["full_festival_avg_per_observed_day"])
 
     phase1_tickets = int(phase_summary.loc[phase_summary["phase"] == "phase_1", "tickets"].sum()) if not phase_summary.empty and "phase_1" in set(phase_summary.get("phase", [])) else 0
     phase2_tickets = int(phase_summary.loc[phase_summary["phase"] == "phase_2", "tickets"].sum()) if not phase_summary.empty and "phase_2" in set(phase_summary.get("phase", [])) else 0
+    phase3_tickets = int(phase_summary.loc[phase_summary["phase"] == "phase_3", "tickets"].sum()) if not phase_summary.empty and "phase_3" in set(phase_summary.get("phase", [])) else 0
     phase1_rate = float(phase_summary.loc[phase_summary["phase"] == "phase_1", "tickets/day"].astype(float).iloc[0]) if not phase_summary.empty and "phase_1" in set(phase_summary.get("phase", [])) else np.nan
     phase2_rate = float(phase_summary.loc[phase_summary["phase"] == "phase_2", "tickets/day"].astype(float).iloc[0]) if not phase_summary.empty and "phase_2" in set(phase_summary.get("phase", [])) else np.nan
+    phase3_rate = float(phase_summary.loc[phase_summary["phase"] == "phase_3", "tickets/day"].astype(float).iloc[0]) if not phase_summary.empty and "phase_3" in set(phase_summary.get("phase", [])) else np.nan
 
     ambassador_share_phase1 = np.nan
     ambassador_share_phase2 = np.nan
+    ambassador_share_phase3 = np.nan
     if amb_table is not None and not amb_table.empty and phase_table is not None and not phase_table.empty:
         amb_body = amb_table.drop(index="TOTAL", errors="ignore").copy()
         phase1_cols = [c for c in amb_body.columns if "phase_1" in str(c).lower()]
         phase2_cols = [c for c in amb_body.columns if "phase_2" in str(c).lower()]
+        phase3_cols = [c for c in amb_body.columns if "phase_3" in str(c).lower()]
         if phase1_cols and "phase_1" in phase_table.index:
             ambassador_share_phase1 = pd.to_numeric(amb_body[phase1_cols].stack(), errors="coerce").sum() / float(phase_table.loc["phase_1", "tickets"]) * 100
         if phase2_cols and "phase_2" in phase_table.index:
             ambassador_share_phase2 = pd.to_numeric(amb_body[phase2_cols].stack(), errors="coerce").sum() / float(phase_table.loc["phase_2", "tickets"]) * 100
+        if phase3_cols and "phase_3" in phase_table.index:
+            ambassador_share_phase3 = pd.to_numeric(amb_body[phase3_cols].stack(), errors="coerce").sum() / float(phase_table.loc["phase_3", "tickets"]) * 100
 
     ticket_categories = int(len(by_type.drop(index="TOTAL", errors="ignore"))) if by_type is not None and not by_type.empty else 0
     amb_total = int(amb_table.loc["TOTAL", "tickets_total"]) if amb_table is not None and not amb_table.empty and "TOTAL" in amb_table.index else np.nan
 
     phase1_count = int(phase_summary.loc[phase_summary["phase"] == "phase_1", "tickets"].iloc[0]) if not phase_summary.empty and "phase_1" in set(phase_summary.get("phase", [])) else 0
     phase2_count = int(phase_summary.loc[phase_summary["phase"] == "phase_2", "tickets"].iloc[0]) if not phase_summary.empty and "phase_2" in set(phase_summary.get("phase", [])) else 0
+    phase3_count = int(phase_summary.loc[phase_summary["phase"] == "phase_3", "tickets"].iloc[0]) if not phase_summary.empty and "phase_3" in set(phase_summary.get("phase", [])) else 0
     early_count = int(phase_summary.loc[phase_summary["phase"] == "early_bird", "tickets"].iloc[0]) if not phase_summary.empty and "early_bird" in set(phase_summary.get("phase", [])) else 0
 
     lines: List[str] = []
@@ -1521,17 +2040,23 @@ def export_narrative_pdf_report(
         f"Questa analisi parte dal file {csv_path.name} e si chiude con {total_rows:,} ticket analizzati su {total_rows_raw:,} ticket grezzi. Il quadro economico finale non è banale: la somma del Ticket Total è pari a {ticket_sum:,.2f}, mentre la somma dell'Order Total arriva a {order_sum:,.2f}. Le due metriche sono entrambe utili, ma raccontano aspetti diversi del flusso: il Ticket Total misura ciò che entra dal singolo ticket, mentre l'Order Total fotografa il movimento più ampio che passa dal checkout."
     )
     lines.append(
-        f"La timeline dei pagamenti va dal {date_min.strftime('%d/%m/%Y') if pd.notna(date_min) else 'n/d'} al {date_max.strftime('%d/%m/%Y') if pd.notna(date_max) else 'n/d'}. Dentro questa finestra la lettura corretta non è quella di un mercato piatto, ma quella di una curva che si apre, si consolida e poi accelera quando le fasi vengono lette nella loro sequenza reale."
+        f"La timeline dei pagamenti va dal {date_min.strftime('%d/%m/%Y') if pd.notna(date_min) else 'n/d'} al {date_max.strftime('%d/%m/%Y') if pd.notna(date_max) else 'n/d'}. Dentro questa finestra la lettura corretta non è quella di un mercato piatto, ma quella di una curva che si apre, si consolida e mantiene intensità anche nella fase più recente."
     )
     lines.append("")
     lines.append("Punti chiave")
     lines.append(f"- Early bird: {early_count:,} ticket. È una fase di lancio e va letta come un test della domanda iniziale, non come il benchmark principale della maturità commerciale.")
     lines.append("- Phase 0: resta una finestra pre-lineup molto corta. Qui il nome del festival lavora quasi da solo, quindi il dato serve più a misurare la forza del brand che la tenuta del piano artistico.")
     lines.append(
-        f"- Phase 1 e Phase 2: sono il vero punto di confronto. Phase 1 chiude a {phase1_count:,} ticket, mentre Phase 2 arriva allo stesso volume, {phase2_count:,} ticket, ma lo fa con un ritmo giornaliero più alto. Questa è la parte più importante della lettura: la curva non si sta appiattendo, si sta densificando."
+        f"- Phase 1 e Phase 2: restano il primo confronto solido. Phase 1 chiude a {phase1_count:,} ticket con {phase1_rate:.2f} ticket/giorno, mentre Phase 2 arriva a {phase2_count:,} ticket con {phase2_rate:.2f} ticket/giorno. La domanda quindi non si appiattisce: si concentra in una finestra più corta."
     )
     lines.append(
-        f"- Ambassador: il canale non è più un dettaglio. In phase 1 pesa circa {ambassador_share_phase1:.1f}% del volume di fase, e in phase 2 sale a circa {ambassador_share_phase2:.1f}%. Questo significa che la distribuzione sta diventando una leva strutturale, non solo un supporto laterale."
+        f"- Phase 3: al {date_max.strftime('%d/%m/%Y') if pd.notna(date_max) else 'run corrente'} non è più solo un marker futuro. Ha già {phase3_count:,} ticket e un ritmo osservato di {phase3_rate:.2f} ticket/giorno, quindi per ora sta tenendo una densità simile a phase 2."
+    )
+    lines.append(
+        f"- Ambassador: il canale resta rilevante ma cambia peso. In phase 1 pesa circa {ambassador_share_phase1:.1f}% del volume di fase, in phase 2 sale a circa {ambassador_share_phase2:.1f}%, mentre in phase 3, ancora parziale, è al {ambassador_share_phase3:.1f}%. La leva rimane strutturale, ma l'ultima fase sembra più guidata dai ticket standard."
+    )
+    lines.append(
+        f"- Ritmo mensile: tra i mesi completi, {best_all_month} è il picco recente sui ticket totali ({best_all_avg:.2f} ticket/giorno) e {best_full_month} è il picco sui full festival pass ({best_full_avg:.2f} pass/giorno). {latest_month} va letto a parte perché contiene solo {latest_observed_days} giorni osservati: {latest_all_avg:.2f} ticket/giorno totali e {latest_full_avg:.2f} full festival pass/giorno."
     )
     lines.append(
         "- Bundle: Christmas Bundle e Lovers Bundle sono picchi tattici, non fasi strutturali. La loro logica è quella del burst commerciale: pochi giorni, molta densità, impatto immediato."
@@ -1545,15 +2070,15 @@ def export_narrative_pdf_report(
         f"La parte ambassador è ancora più istruttiva: nella tabella complessiva compaiono {amb_total:,} ticket ambassador esclusa la riga TOTAL, quindi il canale ha ormai un peso reale sul totale e non può più essere letto come una semplice appendice."
     )
     lines.append(
-        "Il passaggio da phase 1 a phase 2 è il segnale più forte dell'intero run: il volume complessivo non cambia, ma il tempo necessario per generarlo si riduce. In altre parole, il mercato non si sta esaurendo, sta diventando più veloce."
+        "Il passaggio da phase 1 a phase 2 resta il primo segnale forte del run: il volume complessivo è quasi identico, ma il tempo necessario per generarlo si riduce. La novità più recente è che phase 3 non rompe questo andamento: pur essendo ancora una finestra aperta, mantiene un ritmo giornaliero in linea con phase 2."
     )
     lines.append(
-        "La phase 3 è già presente come marker, quindi la struttura del progetto è pronta per il passo successivo. Però, nel CSV attuale, quella fase non ha ancora massa sufficiente per diventare un riferimento analitico vero e proprio."
+        f"Il dato mensile conferma questa lettura: ad aprile il run raggiunge il massimo tra i mesi completi, mentre i primi giorni di maggio sono ancora troppo pochi per essere confrontati come mese intero. Sono però utili come segnale di continuità, perché il ritmo iniziale resta alto."
     )
     lines.append("")
     lines.append("Conclusione finale")
     lines.append(
-        "La lettura complessiva è positiva: il progetto non mostra segni di appiattimento, ma un passaggio progressivo verso una vendita più densa e più organizzata. Le fasi centrali restano il cuore del modello, gli ambassador stanno crescendo come canale e i bundle funzionano come acceleratori tattici."
+        "La lettura complessiva resta positiva: il progetto non mostra segni di appiattimento, ma un passaggio progressivo verso una vendita più densa e più organizzata. Phase 2 ha accelerato rispetto a phase 1 e phase 3, nei dati disponibili al momento, sta mantenendo quella soglia di intensità. Gli ambassador restano una leva strutturale, mentre i bundle funzionano come acceleratori tattici."
     )
     lines.append(
         "Per il prossimo run, il punto non sarà solo quante vendite arrivano, ma dove si concentrano e con quale intensità giornaliera. È questa la metrica che rende davvero confrontabili le fasi e permette di capire se il festival sta reggendo la pressione del pricing ladder."
@@ -1566,13 +2091,15 @@ def export_narrative_pdf_report(
             "7 Chakras EDA - Conclusioni narrative",
             paragraphs=[
                 f"Questa analisi parte dal file {csv_path.name} e si chiude con {total_rows:,} ticket analizzati su {total_rows_raw:,} ticket grezzi. Il quadro economico finale non è banale: la somma del Ticket Total è pari a {ticket_sum:,.2f}, mentre la somma dell'Order Total arriva a {order_sum:,.2f}. Le due metriche sono entrambe utili, ma raccontano aspetti diversi del flusso: il Ticket Total misura ciò che entra dal singolo ticket, mentre l'Order Total fotografa il movimento più ampio che passa dal checkout.",
-                f"La timeline dei pagamenti va dal {date_min.strftime('%d/%m/%Y') if pd.notna(date_min) else 'n/d'} al {date_max.strftime('%d/%m/%Y') if pd.notna(date_max) else 'n/d'}. Dentro questa finestra la lettura corretta non è quella di un mercato piatto, ma quella di una curva che si apre, si consolida e poi accelera quando le fasi vengono lette nella loro sequenza reale.",
+                f"La timeline dei pagamenti va dal {date_min.strftime('%d/%m/%Y') if pd.notna(date_min) else 'n/d'} al {date_max.strftime('%d/%m/%Y') if pd.notna(date_max) else 'n/d'}. Dentro questa finestra la lettura corretta non è quella di un mercato piatto, ma quella di una curva che si apre, si consolida e mantiene intensità anche nella fase più recente.",
             ],
             bullets=[
                 f"Early bird: {early_count:,} ticket. È una fase di lancio e va letta come un test della domanda iniziale, non come il benchmark principale della maturità commerciale.",
                 "- Phase 0: resta una finestra pre-lineup molto corta. Qui il nome del festival lavora quasi da solo, quindi il dato serve più a misurare la forza del brand che la tenuta del piano artistico.",
-                f"Phase 1 e Phase 2: sono il vero punto di confronto. Phase 1 chiude a {phase1_count:,} ticket, mentre Phase 2 arriva allo stesso volume, {phase2_count:,} ticket, ma lo fa con un ritmo giornaliero più alto. Questa è la parte più importante della lettura: la curva non si sta appiattendo, si sta densificando.",
-                f"Ambassador: il canale non è più un dettaglio. In phase 1 pesa circa {ambassador_share_phase1:.1f}% del volume di fase, e in phase 2 sale a circa {ambassador_share_phase2:.1f}%. Questo significa che la distribuzione sta diventando una leva strutturale, non solo un supporto laterale.",
+                f"Phase 1 e Phase 2: Phase 1 chiude a {phase1_count:,} ticket con {phase1_rate:.2f} ticket/giorno, mentre Phase 2 arriva a {phase2_count:,} ticket con {phase2_rate:.2f} ticket/giorno. La domanda quindi non si appiattisce: si concentra.",
+                f"Phase 3: al {date_max.strftime('%d/%m/%Y') if pd.notna(date_max) else 'run corrente'} ha già {phase3_count:,} ticket e un ritmo osservato di {phase3_rate:.2f} ticket/giorno, quindi sta tenendo una densità simile a phase 2.",
+                f"Ambassador: in phase 1 pesa circa {ambassador_share_phase1:.1f}%, in phase 2 sale a circa {ambassador_share_phase2:.1f}%, mentre in phase 3, ancora parziale, è al {ambassador_share_phase3:.1f}%. La leva rimane strutturale, ma l'ultima fase sembra più guidata dai ticket standard.",
+                f"Ritmo mensile: tra i mesi completi, {best_all_month} è il picco sui ticket totali ({best_all_avg:.2f}/giorno) e {best_full_month} è il picco sui full festival pass ({best_full_avg:.2f}/giorno).",
                 "- Bundle: Christmas Bundle e Lovers Bundle sono picchi tattici, non fasi strutturali. La loro logica è quella del burst commerciale: pochi giorni, molta densità, impatto immediato.",
             ],
             footer="Conseguenze narrative generate automaticamente dal run corrente.",
@@ -1584,13 +2111,13 @@ def export_narrative_pdf_report(
             "Lettura delle fasi",
             paragraphs=[
                 "Il modo più utile per leggere le fasi è smettere di guardare soltanto i totali e cominciare a guardare il ritmo giornaliero. Una fase che vende meno ticket ma in meno tempo può essere più forte di una fase lunga con lo stesso volume, perché mostra che la domanda continua a reagire anche quando il pricing ladder sale.",
-                "È esattamente per questo che phase 2 conta così tanto. Se phase 1 e phase 2 chiudono con lo stesso numero di ticket, ma phase 2 comprime quel volume in meno giorni, la lettura commerciale è positiva: il mercato non è stanco, si sta muovendo più velocemente.",
+                "È esattamente per questo che phase 2 conta così tanto. Se phase 1 e phase 2 chiudono quasi con lo stesso numero di ticket, ma phase 2 comprime quel volume in meno giorni, la lettura commerciale è positiva: il mercato non è stanco, si sta muovendo più velocemente. La novità del run corrente è che phase 3, pur ancora aperta, sta tenendo lo stesso ordine di grandezza nel ritmo.",
             ],
             bullets=[
                 "Early bird e phase 0 vanno trattate come finestre di lancio, non come KPI principale della salute commerciale.",
                 f"Phase 1 si muove intorno a {phase1_rate:.2f} ticket/giorno, quindi è il primo vero test della capacità del prodotto di continuare a vendere quando l'impulso iniziale si attenua.",
                 f"Phase 2 sale a {phase2_rate:.2f} ticket/giorno, che è il segnale più forte dell'intera ladder perché mostra che il mercato non si è raffreddato: si è compattato.",
-                "La presenza del marker di phase 3 indica che la struttura è già pronta per il passo successivo, ma il CSV attuale appartiene ancora all'era di phase 2, quindi qualsiasi lettura su phase 3 va mantenuta prudente.",
+                f"Phase 3 è da leggere come fase corrente parziale: {phase3_count:,} ticket e {phase3_rate:.2f} ticket/giorno fino al {date_max.strftime('%d/%m/%Y') if pd.notna(date_max) else 'run corrente'}.",
             ],
             footer="Il modello delle fasi va letto come modello di ritmo, non solo come modello di prezzo.",
             figsize=(11.69, 8.27),
@@ -1621,11 +2148,11 @@ def export_narrative_pdf_report(
             bullets=[
                 "Le fasi di lancio confermano una domanda iniziale reale.",
                 "Le fasi centrali confermano che il festival riesce a continuare a vendere dopo la prima ondata.",
-                "La dinamica delle fasi più avanzate parla di accelerazione, non di stanchezza.",
+                "La dinamica delle fasi più avanzate parla di accelerazione prima e tenuta poi, non di stanchezza.",
                 "Ambassador e bundle stanno diventando leve strategiche, non semplici supporti accessori.",
                 "Il prossimo run andrà letto sulle stesse finestre di fase, così il trend resterà confrontabile nel tempo.",
             ],
-            footer="Se phase 3 comincerà ad accumulare ticket, questo stesso impianto narrativo potrà essere riutilizzato senza cambiare la logica.",
+            footer="Phase 3 è ormai misurabile, ma va ancora letta come finestra aperta.",
             figsize=(11.69, 8.27),
         )
 
@@ -1966,6 +2493,7 @@ def main() -> None:
     plot_format = plots_cfg.get("format", "png")
     plots_dir = output_dir / "plots"
     focused_ticket_cfg = config.get("focused_ticket_type_summary", {}) or {}
+    volunteers_cfg = config.get("volunteers", {}) or {}
     pdf_cfg = config.get("pdf_report", {}) or {}
     narrative_pdf_cfg = config.get("narrative_pdf_report", {}) or {}
 
@@ -2044,10 +2572,14 @@ def main() -> None:
     geo_report_cols = list(dict.fromkeys(geo_country_cols + geo_city_cols))
     attendee_email_col = ensure_existing(col_value("attendee_email", "Attendee E-mail"))
     buyer_email_col = ensure_existing(col_value("buyer_email", "Buyer E-Mail"))
+    name_col = ensure_existing(col_value("name", "Name"))
+    first_name_col = ensure_existing(col_value("first_name", "First Name"))
+    last_name_col = ensure_existing(col_value("last_name", "Last Name"))
     order_number_col = ensure_existing(col_value("order_number", "Order Number"))
     order_status_col = ensure_existing(col_value("order_status", "Order Status"))
     payment_gateway_col = ensure_existing(col_value("payment_gateway", "Payment Gateway"))
     ticket_id_col = ensure_existing(col_value("ticket_id", "Ticket ID"))
+    ticket_code_col = ensure_existing(col_value("ticket_code", "Ticket Code"))
     dob_preferred = col_value("date_of_birth", "Date of birth / Data di nascita (Campi ticket holder)")
     dob_col = ensure_existing(
         dob_preferred,
@@ -2111,6 +2643,27 @@ def main() -> None:
     else:
         print("\nColonna Order Status non disponibile: analisi su tutte le righe.")
         df = df_full
+
+    original_ticket_type_col = ticket_type_col
+    ticket_total_num_for_volunteers = numeric_map.get(ticket_total_col)
+    volunteer_info = apply_volunteer_enrichment(
+        df=df,
+        volunteers_cfg=volunteers_cfg,
+        ticket_type_col=original_ticket_type_col,
+        ticket_total_num=ticket_total_num_for_volunteers,
+        payment_date_col=payment_date_col,
+        attendee_email_col=attendee_email_col,
+        buyer_email_col=buyer_email_col,
+        name_col=name_col,
+        first_name_col=first_name_col,
+        last_name_col=last_name_col,
+        order_number_col=order_number_col,
+        ticket_code_col=ticket_code_col,
+        ticket_id_col=ticket_id_col,
+        csv_dir=csv_dir,
+    )
+    if volunteer_info.get("analysis_ticket_type_col"):
+        ticket_type_col = str(volunteer_info["analysis_ticket_type_col"])
 
     clean_path = csv_dir / "tickets_clean.csv"
     try:
@@ -2179,6 +2732,11 @@ def main() -> None:
         print(f"Prezzo medio per riga: {avg_ticket_price:,.2f}")
     if order_total_num in df.columns:
         print(f"Somma {order_total_num}: {tot_revenue_order:,.2f}")
+    if volunteer_info.get("enabled") and volunteer_info.get("matched_count", 0):
+        volunteer_refund = float(volunteer_info.get("refund_total", 0.0) or 0.0)
+        print(f"Potenziale rimborso volontari: {volunteer_refund:,.2f}")
+        if ticket_total_num in df.columns:
+            print(f"Ticket Total netto dopo potenziale rimborso volontari: {tot_revenue_ticket - volunteer_refund:,.2f}")
 
     # Order Status distribution (usa sempre il dataset completo)
     if order_status_col and order_status_col in df_full.columns:
@@ -2440,6 +2998,27 @@ def main() -> None:
                 plot_sales_timelines(daily, parsed_timeline_markers, plots_dir, plot_format)
         else:
             print("\nNessuna data valida per la timeline vendite.")
+
+    monthly_sales = build_monthly_ticket_sales_summary(df, ticket_type_col)
+    if not monthly_sales.empty:
+        monthly_sales_path = csv_dir / "monthly_ticket_sales_average.csv"
+        monthly_sales.to_csv(monthly_sales_path, index=False, encoding="utf-8")
+        print(f"\nRiepilogo mensile vendite salvato in: {monthly_sales_path}")
+        print("\nMedia giornaliera vendite per mese:")
+        print(
+            monthly_sales[
+                [
+                    "month",
+                    "observed_days",
+                    "all_tickets",
+                    "all_avg_per_observed_day",
+                    "full_festival_tickets",
+                    "full_festival_avg_per_observed_day",
+                ]
+            ].to_string(index=False)
+        )
+        if plots_enabled:
+            plot_monthly_ticket_sales_summary(monthly_sales, plots_dir, plot_format)
 
     # === Provenienza geografica ==============================================
     analyze_geography(df, geo_country_cols, geo_city_cols, plots_enabled, plots_dir, plot_format)

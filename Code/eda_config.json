@@ -1,6 +1,6 @@
 {
   "csv_path": "C:/Seb/2ndJobsCodes/7chackras/Documenti/Tickets/2026_5Maggio_08_48.csv",
-  "output_dir": "C:/Seb/2ndJobsCodes/7chackras/Documenti/Tickets/2026_5Maggio_08_48_Analysis",
+  "output_dir": "C:/Seb/2ndJobsCodes/7chackras/Documenti/Tickets/2026_5Maggio_08_48_Analysis_MoreData_1",
   "plots": {
     "enabled": true,
     "format": "png"
@@ -103,6 +103,13 @@
     "Check-ins",
     "Check-outs"
   ],
+  "volunteers": {
+    "enabled": true,
+    "csv_path": "C:/Seb/2ndJobsCodes/7chackras/Documenti/Tickets/Volontari_5Maggio26_22.51.csv",
+    "name_col": "Name",
+    "email_col": "Email",
+    "enriched_suffix": "_enriched"
+  },
   "focused_ticket_type_summary": {
     "enabled": true,
     "csv_subdir": "csv",
