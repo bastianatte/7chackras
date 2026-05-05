@@ -258,9 +258,23 @@ def is_full_festival_pass_ticket(value: object) -> bool:
     normalized = " ".join(normalized.split())
     if not normalized:
         return False
+    if "volunteer" in normalized:
+        return False
     if any(keyword in normalized for keyword in FULL_FESTIVAL_EXCLUDE_KEYWORDS):
         return False
     return any(keyword in normalized for keyword in FULL_FESTIVAL_INCLUDE_KEYWORDS)
+
+
+def is_accessory_ticket(value: object) -> bool:
+    if value is None:
+        return False
+    normalized = str(value).lower()
+    normalized = normalized.replace("\u2013", "-").replace("\u2014", "-")
+    normalized = " ".join(normalized.split())
+    if not normalized:
+        return False
+    accessory_keywords = ("volunteer", "caravan", "membership", "reticketing", "caregiver")
+    return any(keyword in normalized for keyword in accessory_keywords)
 
 
 def normalize_match_email(value: object) -> str:
@@ -608,6 +622,215 @@ def export_focused_ticket_summary(
     )
     print(f"\nRiepilogo focused salvato in: {csv_path}")
     print(f"Grafico focused salvato in: {plot_dir / f'{plot_stem}.{plot_format}' }")
+
+
+def build_full_festival_ticket_type_summary(
+    df: pd.DataFrame,
+    ticket_type_col: str,
+    ticket_total_num: Optional[str],
+) -> pd.DataFrame:
+    full_mask = df[ticket_type_col].map(is_full_festival_pass_ticket)
+    full_df = df.loc[full_mask].copy()
+    if full_df.empty:
+        return pd.DataFrame()
+
+    full_df["ticket_category"] = full_df[ticket_type_col].fillna("").map(focused_ticket_category)
+    aggregations: Dict[str, object] = {"tickets": ("ticket_category", "size")}
+    if ticket_total_num and ticket_total_num in full_df.columns:
+        aggregations["revenue"] = (ticket_total_num, "sum")
+        aggregations["avg_price"] = (ticket_total_num, "mean")
+
+    summary = (
+        full_df.groupby("ticket_category", dropna=False)
+        .agg(**aggregations)
+        .reset_index()
+        .sort_values(["tickets", "ticket_category"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+
+    total_row: Dict[str, object] = {
+        "ticket_category": "TOTAL",
+        "tickets": int(summary["tickets"].sum()),
+    }
+    if "revenue" in summary.columns:
+        total_revenue = float(summary["revenue"].sum())
+        total_tickets = int(total_row["tickets"])
+        total_row["revenue"] = total_revenue
+        total_row["avg_price"] = total_revenue / total_tickets if total_tickets else np.nan
+        summary["revenue"] = summary["revenue"].round(2)
+        summary["avg_price"] = summary["avg_price"].round(2)
+
+    return pd.concat([summary, pd.DataFrame([total_row])], ignore_index=True)
+
+
+def plot_full_festival_ticket_type_summary(
+    summary: pd.DataFrame,
+    plots_dir: Path,
+    plot_format: str,
+) -> None:
+    if summary.empty:
+        print("\nNessun dato disponibile per il grafico full festival ticket types.")
+        return
+
+    ordered = summary[summary["ticket_category"] != "TOTAL"].copy()
+    ordered = ordered.sort_values(["tickets", "ticket_category"], ascending=[True, True]).reset_index(drop=True)
+    total_tickets = int(ordered["tickets"].sum()) if not ordered.empty else 0
+
+    fig, ax = plt.subplots(figsize=(12, max(4.8, 0.52 * len(ordered))))
+    ordered.plot(kind="barh", x="ticket_category", y="tickets", ax=ax, color="#2e7d32", legend=False)
+    ax.set_title("Full festival pass by ticket type")
+    ax.set_xlabel("Tickets")
+    ax.set_ylabel("")
+    ax.grid(axis="x", alpha=0.25)
+    if not ordered.empty:
+        max_tickets = int(ordered["tickets"].max())
+        ax.set_xlim(0, max_tickets * 1.18)
+        ax.bar_label(ax.containers[0], padding=3, fmt="%.0f")
+    fig.text(
+        0.985,
+        0.02,
+        f"TOTAL = {total_tickets}",
+        ha="right",
+        va="bottom",
+        fontsize=13,
+        bbox={"facecolor": "white", "alpha": 0.88, "edgecolor": "#999999", "boxstyle": "round,pad=0.35"},
+    )
+    fig.tight_layout(rect=[0, 0.05, 1, 1])
+    save_plot(fig, plots_dir, "full_festival_ticket_types", plot_format)
+
+
+def export_full_festival_ticket_type_summary(
+    df: pd.DataFrame,
+    ticket_type_col: Optional[str],
+    ticket_total_num: Optional[str],
+    csv_dir: Path,
+    plots_dir: Path,
+    plot_format: str,
+    plots_enabled: bool,
+) -> None:
+    if not ticket_type_col or ticket_type_col not in df.columns:
+        return
+
+    summary = build_full_festival_ticket_type_summary(df, ticket_type_col, ticket_total_num)
+    if summary.empty:
+        print("\nNessun dato full festival disponibile per export dedicato.")
+        return
+
+    csv_path = csv_dir / "full_festival_ticket_types.csv"
+    summary.to_csv(csv_path, index=False, encoding="utf-8")
+    print(f"\nRiepilogo full festival ticket types salvato in: {csv_path}")
+    if plots_enabled:
+        plot_full_festival_ticket_type_summary(summary, plots_dir, plot_format)
+
+
+def build_filtered_ticket_type_summary(
+    df: pd.DataFrame,
+    ticket_type_col: str,
+    ticket_total_num: Optional[str],
+    mask: pd.Series,
+) -> pd.DataFrame:
+    filtered = df.loc[mask].copy()
+    if filtered.empty:
+        return pd.DataFrame()
+
+    filtered["ticket_category"] = filtered[ticket_type_col].fillna("").map(focused_ticket_category)
+    aggregations: Dict[str, object] = {"tickets": ("ticket_category", "size")}
+    if ticket_total_num and ticket_total_num in filtered.columns:
+        aggregations["revenue"] = (ticket_total_num, "sum")
+        aggregations["avg_price"] = (ticket_total_num, "mean")
+
+    summary = (
+        filtered.groupby("ticket_category", dropna=False)
+        .agg(**aggregations)
+        .reset_index()
+        .sort_values(["tickets", "ticket_category"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+
+    total_row: Dict[str, object] = {
+        "ticket_category": "TOTAL",
+        "tickets": int(summary["tickets"].sum()),
+    }
+    if "revenue" in summary.columns:
+        total_revenue = float(summary["revenue"].sum())
+        total_tickets = int(total_row["tickets"])
+        total_row["revenue"] = round(total_revenue, 2)
+        total_row["avg_price"] = round(total_revenue / total_tickets, 2) if total_tickets else np.nan
+        summary["revenue"] = summary["revenue"].round(2)
+        summary["avg_price"] = summary["avg_price"].round(2)
+
+    return pd.concat([summary, pd.DataFrame([total_row])], ignore_index=True)
+
+
+def plot_ticket_type_summary_barh(
+    summary: pd.DataFrame,
+    plots_dir: Path,
+    plot_name: str,
+    title: str,
+    color: str,
+    plot_format: str,
+) -> None:
+    if summary.empty:
+        print(f"\nNessun dato disponibile per il grafico {plot_name}.")
+        return
+
+    ordered = summary[summary["ticket_category"] != "TOTAL"].copy()
+    ordered = ordered.sort_values(["tickets", "ticket_category"], ascending=[True, True]).reset_index(drop=True)
+    total_tickets = int(ordered["tickets"].sum()) if not ordered.empty else 0
+
+    fig, ax = plt.subplots(figsize=(12, max(4.8, 0.52 * len(ordered))))
+    ordered.plot(kind="barh", x="ticket_category", y="tickets", ax=ax, color=color, legend=False)
+    ax.set_title(title)
+    ax.set_xlabel("Tickets")
+    ax.set_ylabel("")
+    ax.grid(axis="x", alpha=0.25)
+    if not ordered.empty:
+        max_tickets = int(ordered["tickets"].max())
+        ax.set_xlim(0, max_tickets * 1.18)
+        ax.bar_label(ax.containers[0], padding=3, fmt="%.0f")
+    fig.text(
+        0.985,
+        0.02,
+        f"TOTAL = {total_tickets}",
+        ha="right",
+        va="bottom",
+        fontsize=13,
+        bbox={"facecolor": "white", "alpha": 0.88, "edgecolor": "#999999", "boxstyle": "round,pad=0.35"},
+    )
+    fig.tight_layout(rect=[0, 0.05, 1, 1])
+    save_plot(fig, plots_dir, plot_name, plot_format)
+
+
+def export_accessory_ticket_type_summary(
+    df: pd.DataFrame,
+    ticket_type_col: Optional[str],
+    ticket_total_num: Optional[str],
+    csv_dir: Path,
+    plots_dir: Path,
+    plot_format: str,
+    plots_enabled: bool,
+) -> None:
+    if not ticket_type_col or ticket_type_col not in df.columns:
+        return
+
+    accessory_mask = df[ticket_type_col].map(is_accessory_ticket)
+    summary = build_filtered_ticket_type_summary(df, ticket_type_col, ticket_total_num, accessory_mask)
+    if summary.empty:
+        print("\nNessun dato accessori disponibile per export dedicato.")
+        return
+
+    csv_path = csv_dir / "accessory_ticket_types.csv"
+    summary.to_csv(csv_path, index=False, encoding="utf-8")
+    print(f"\nRiepilogo accessory ticket types salvato in: {csv_path}")
+    if plots_enabled:
+        plot_ticket_type_summary_barh(
+            summary,
+            plots_dir,
+            "accessory_ticket_types",
+            "Accessory ticket types",
+            "#6d4c41",
+            plot_format,
+        )
 
 
 def add_timeline_markers(ax: plt.Axes, markers: List[Dict[str, object]]) -> None:
@@ -2794,6 +3017,24 @@ def main() -> None:
             plots_dir,
             plot_format,
             focused_ticket_cfg,
+        )
+        export_full_festival_ticket_type_summary(
+            df,
+            ticket_type_col,
+            ticket_total_num,
+            csv_dir,
+            plots_dir,
+            plot_format,
+            plots_enabled,
+        )
+        export_accessory_ticket_type_summary(
+            df,
+            ticket_type_col,
+            ticket_total_num,
+            csv_dir,
+            plots_dir,
+            plot_format,
+            plots_enabled,
         )
 
     # === Ricavi per fase (da Ticket Type) ====================================
